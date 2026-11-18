@@ -1,6 +1,8 @@
 """Clip rules are observed only through the worker subprocess contract."""
 
 from pathlib import Path
+import shutil
+from urllib.parse import unquote
 
 import pytest
 
@@ -352,25 +354,141 @@ def test_picture_and_timecode_references_are_not_audio_clips(tmp_path, mode):
     assert progress[-1]["clips_done"] == progress[-1]["clips_total"] == 3
 
 
-def test_stored_absolute_file_is_online_even_outside_delivery_search(tmp_path):
-    path = Timeline().export(tmp_path / "delivery" / "package" / "aafs" / "external.aaf",
-                             mode="linked")
+def test_stored_absolute_file_outside_delivery_reports_each_affected_clip(tmp_path):
+    timeline = Timeline().with_clip(1, record_start=24).with_clip(
+        2, record_start=48
+    ).with_clip(3, record_start=72, media_name="clip three.wav")
+    timeline = Timeline(clips=tuple(reversed(timeline.clips)))
+    path = timeline.export(
+        tmp_path / "delivery" / "package" / "aafs" / "external.aaf", mode="linked"
+    )
     external = tmp_path / "external_media"
-    external.mkdir()
-    for media in (path.parent / "external_media").iterdir():
-        media.rename(external / media.name)
-    with edit_export(path) as aaf:
-        for mob in aaf.content.sourcemobs():
-            descriptor = mob.descriptor
-            for locator in descriptor["Locator"].value:
-                filename = Path(locator["URLString"].value).name
-                locator["URLString"].value = (external / filename).as_uri()
+    move_media_to_stored_paths(path, external)
 
     events = check(path)
 
-    # The separate outside-delivery rule belongs to its own ticket.
-    assert events[-1]["verdict"] == "PASS"
-    assert findings(events) == []
+    assert events[-1]["verdict"] == "FAIL"
+    assert findings(events) == [
+        {
+            "schema_version": 1,
+            "type": "finding",
+            "aaf_path": str(path),
+            "rule_id": "media_outside_delivery_folder",
+            "rule_name": "Media outside delivery folder",
+            "severity": "FAIL",
+            "track": track,
+            "record_in_timecode": timecode,
+            "clip_name": name,
+            "source_file": source,
+            "message": "Linked media exists only outside the delivery folder.",
+            "fix_instruction": "Include the media in the delivery folder and re-export the AAF.",
+        }
+        for track, timecode, name, source in [
+            ({"slot_id": 3, "name": "Audio 1"}, "00:00:01:00", "Clip 1", "clip_1.wav"),
+            ({"slot_id": 4, "name": "Audio 2"}, "00:00:02:00", "Clip 2", "clip_2.wav"),
+            ({"slot_id": 5, "name": "Audio 3"}, "00:00:03:00", "Clip 3", "clip three.wav"),
+        ]
+    ]
+    assert check(path) == events
+
+
+def move_media_to_stored_paths(path, external):
+    external.mkdir()
+    for media in (path.parent / f"{path.stem}_media").iterdir():
+        media.rename(external / media.name)
+    set_stored_paths(path, external)
+
+
+def set_stored_paths(path, external):
+    with edit_export(path) as aaf:
+        for mob in aaf.content.sourcemobs():
+            for locator in mob.descriptor["Locator"].value:
+                filename = unquote(Path(locator["URLString"].value).name)
+                locator["URLString"].value = (external / filename).as_uri()
+
+
+@pytest.mark.parametrize("levels_above", [0, 1, 2])
+@pytest.mark.parametrize("keep_absolute", [False, True])
+def test_delivering_external_media_clears_outside_failure(
+    tmp_path, levels_above, keep_absolute,
+):
+    path = Timeline().export(
+        tmp_path / "delivery" / "package" / "aafs" / "external.aaf", mode="linked"
+    )
+    external = tmp_path / "external_media"
+    move_media_to_stored_paths(path, external)
+
+    outside = check(path)
+    assert outside[-1]["verdict"] == "FAIL"
+    assert [item["rule_id"] for item in findings(outside)] == [
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+    ]
+
+    destination = path.parent
+    for _ in range(levels_above):
+        destination = destination.parent
+    for media in external.iterdir():
+        if keep_absolute:
+            shutil.copyfile(media, destination / media.name)
+        else:
+            media.rename(destination / media.name)
+
+    inside = check(path)
+
+    assert inside[-1]["verdict"] == "PASS"
+    assert findings(inside) == []
+
+
+def test_removing_external_media_changes_outside_findings_to_offline(tmp_path):
+    path = Timeline().export(
+        tmp_path / "delivery" / "package" / "aafs" / "external.aaf", mode="linked"
+    )
+    external = tmp_path / "external_media"
+    move_media_to_stored_paths(path, external)
+    outside = check(path)
+    assert outside[-1]["verdict"] == "FAIL"
+    assert [item["rule_id"] for item in findings(outside)] == [
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+    ]
+    for media in external.iterdir():
+        media.unlink()
+
+    offline = check(path)
+
+    assert offline[-1]["verdict"] == "FAIL"
+    assert [(item["rule_id"], item["clip_name"], item["source_file"])
+            for item in findings(offline)] == [
+        ("offline_clip", "Clip 1", "clip_1.wav"),
+        ("offline_clip", "Clip 2", "clip_2.wav"),
+        ("offline_clip", "Clip 3", "clip_3.wav"),
+    ]
+
+
+def test_embedding_media_ignores_stale_locators_to_existing_external_files(tmp_path):
+    timeline = Timeline().with_clip(1, chain_depth=2)
+    path = timeline.export(
+        tmp_path / "delivery" / "package" / "aafs" / "external.aaf", mode="linked"
+    )
+    external = tmp_path / "external_media"
+    move_media_to_stored_paths(path, external)
+    outside = check(path)
+    assert outside[-1]["verdict"] == "FAIL"
+    assert [item["rule_id"] for item in findings(outside)] == [
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+        "media_outside_delivery_folder",
+    ]
+    timeline.export(path, mode="embedded")
+    set_stored_paths(path, external)
+
+    embedded = check(path)
+
+    assert embedded[-1]["verdict"] == "PASS"
+    assert findings(embedded) == []
 
 
 def test_delivery_search_does_not_extend_to_a_third_parent(tmp_path):

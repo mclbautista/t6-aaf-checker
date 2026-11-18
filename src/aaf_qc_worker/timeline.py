@@ -19,6 +19,7 @@ class TimelineClip:
     source_file: str | None
     embedded: bool
     linked_path: Path | None
+    outside_delivery: bool
 
 
 def locator_path(url):
@@ -38,12 +39,12 @@ def linked_file(path, locators, levels_above):
             for root in roots:
                 candidate = root.joinpath(*parts[start:])
                 if candidate.is_file():
-                    return candidate
+                    return candidate, False
     for locator in locators:
         stored = locator_path(locator)
         if stored.is_file():
-            return stored
-    return None
+            return stored, True
+    return None, False
 
 
 def clip_media(component, essence_ids, path, config):
@@ -69,17 +70,20 @@ def clip_media(component, essence_ids, path, config):
         if mob.mob_id in essence_ids:
             locators = descriptor["Locator"].value if descriptor else []
             name = locator_path(locators[0]["URLString"].value).name if locators else mob.name
-            return True, None, name
+            return True, None, name, False
         if isinstance(descriptor, FileDescriptor):
             file_mob = mob
         reference = _first_source_clip(target_slot.segment)
     if file_mob is None:
-        return False, None, None
+        return False, None, None, False
     locators = [item["URLString"].value for item in file_mob.descriptor["Locator"].value]
+    linked_path, outside_delivery = linked_file(
+        path, locators, config["linked_media"]["levels_above"]
+    )
     return (
-        False,
-        linked_file(path, locators, config["linked_media"]["levels_above"]),
+        False, linked_path,
         locator_path(locators[0]).name if locators else file_mob.name,
+        outside_delivery,
     )
 
 
@@ -137,7 +141,7 @@ def sound_clips(aaf, path, config):
                 continue
             for position, component in timeline_occurrences(slot.segment):
                 master = component.mob
-                embedded, linked_path, source_file = clip_media(
+                embedded, linked_path, source_file, outside_delivery = clip_media(
                     component, essence_ids, path, config
                 )
                 record_start = Fraction(position, 1) / slot.edit_rate
@@ -148,6 +152,6 @@ def sound_clips(aaf, path, config):
                     slot.slot_id, slot.name, record_start,
                     timecode_label(frames, fps, drop),
                     master.name if master else None, source_file,
-                    embedded, linked_path,
+                    embedded, linked_path, outside_delivery,
                 ))
     return sorted(clips, key=lambda clip: (clip.slot_id, clip.record_start))
