@@ -34,6 +34,8 @@ and ``wav_container`` select libsndfile-generated format variants. All locators
 point into an absent export folder. Tape is a physical
 SourceMob name; scene and take are MasterMob comments. ``ixml`` accepts field
 pairs (or raw XML bytes) for a WAV iXML chunk placed after data in either mode.
+WAVs include a synthetic version-zero ``bext`` chunk before data by default;
+``bext=False`` omits it to exercise the broadcast-WAV information rule.
 
 ``patch_header`` changes CFB version/sector-shift bytes, optionally on a copy.
 ``truncate_bytes`` removes WAV data while preserving the original header sizes
@@ -86,6 +88,7 @@ class Clip:
     scene: str = "Scene 1"
     take: str = "1"
     ixml: tuple[tuple[str, str], ...] | bytes | None = None
+    bext: bool = True
     truncate_bytes: int = 0
     media_mode: str | None = None
     chain_depth: int = 0
@@ -308,6 +311,8 @@ def _write_wav(path: Path, clip: Clip) -> int:
             riff_size = stream.tell() - 8
             stream.seek(4)
             stream.write(struct.pack("<I", riff_size))
+    if clip.bext and clip.wav_container in ("WAV", "WAVEX"):
+        _add_bext(path)
     if clip.truncate_bytes:
         data_bytes = samples * clip.channels * width
         if not 0 < clip.truncate_bytes <= data_bytes:
@@ -316,6 +321,33 @@ def _write_wav(path: Path, clip: Clip) -> int:
         with path.open("r+b") as stream:
             stream.truncate(path.stat().st_size - clip.truncate_bytes)
     return samples
+
+
+def _add_bext(path):
+    """Insert a version-zero broadcast extension before data, keeping fmt offsets."""
+    with path.open("rb") as source, tempfile.TemporaryFile(dir=path.parent) as output:
+        output.write(source.read(12))
+        while header := source.read(8):
+            chunk_id, size = struct.unpack("<4sI", header)
+            if chunk_id == b"data":
+                output.write(struct.pack("<4sI", b"bext", 602))
+                output.write(bytes(602))
+                output.write(header)
+                shutil.copyfileobj(source, output, CHUNK_FRAMES)
+                break
+            output.write(header)
+            remaining = size + size % 2
+            while remaining:
+                block = source.read(min(remaining, CHUNK_FRAMES))
+                if not block:
+                    raise ValueError("Synthetic WAV header is incomplete.")
+                output.write(block)
+                remaining -= len(block)
+        output.seek(4)
+        output.write(struct.pack("<I", path.stat().st_size + 610 - 8))
+        output.seek(0)
+        with path.open("wb") as destination:
+            shutil.copyfileobj(output, destination, CHUNK_FRAMES)
 
 
 def embedded_essence_by_name(aaf):

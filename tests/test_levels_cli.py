@@ -284,4 +284,4 @@ def test_shared_file_occurrences_keep_distinct_windows_and_deterministic_order(t
     assert events == check(path)
     progress = [event for event in events if event["type"] == "progress"]
     # One full embedded pass per occurrence, including two uses of the file.
-    assert progress[-1]["bytes_read"] == (12_108_272 if mode == "embedded" else 0)
+    assert progress[-1]["bytes_read"] == (12_110_712 if mode == "embedded" else 0)

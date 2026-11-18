@@ -46,7 +46,7 @@ def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
     assert progress[0]["clips_done"] == 0
     assert all(event["clips_total"] == 3 for event in progress)
     assert progress[-1]["clips_done"] == 3
-    assert progress[-1]["bytes_read"] == 4_756_884
+    assert progress[-1]["bytes_read"] == 4_758_714
     assert not [event for event in events if event["type"] == "finding"]
     assert events[-1]["verdict"] == "PASS"
     assert events[-1]["report_paths"] == []

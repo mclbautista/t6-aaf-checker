@@ -53,7 +53,7 @@ def test_online_baselines_report_clip_progress(tmp_path, mode):
     ]
     assert all(event["aaf_path"] == str(path) for event in progress)
     assert progress[0]["bytes_read"] == 0
-    assert progress[-1]["bytes_read"] == (4_756_884 if mode == "embedded" else 0)
+    assert progress[-1]["bytes_read"] == (4_758_714 if mode == "embedded" else 0)
 
 
 @pytest.mark.parametrize("levels_above", [0, 1, 2])

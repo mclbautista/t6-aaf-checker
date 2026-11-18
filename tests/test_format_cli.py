@@ -86,7 +86,7 @@ def test_matching_baseline_preserves_inputs_and_has_no_format_findings(
     assert format_findings(events) == []
     assert events[-1]["verdict"] == "PASS"
     progress = [event for event in events if event["type"] == "progress"]
-    assert progress[-1]["bytes_read"] == (4_756_884 if mode == "embedded" else 0)
+    assert progress[-1]["bytes_read"] == (4_758_714 if mode == "embedded" else 0)
     for item in inputs:
         with item.open("rb") as stream:
             assert hashlib.file_digest(stream, "sha256").hexdigest() == before[item]
