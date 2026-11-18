@@ -49,12 +49,17 @@ def check_aaf(path, config):
                 bytes_read=len(header),
             )
             for done, clip in enumerate(clips, 1):
+                rule_id = None
                 if not clip.embedded and clip.linked_path is None:
-                    rule = config["offline_clip"]
+                    rule_id = "offline_clip"
+                elif not clip.embedded and clip.outside_delivery:
+                    rule_id = "media_outside_delivery_folder"
+                if rule_id:
+                    rule = config[rule_id]
                     emit(
                         "finding",
                         aaf_path=str(path),
-                        rule_id="offline_clip",
+                        rule_id=rule_id,
                         rule_name=rule["name"],
                         severity=rule["severity"],
                         track={"slot_id": clip.slot_id, "name": clip.track_name},
