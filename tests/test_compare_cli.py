@@ -184,8 +184,7 @@ def test_duplicate_uses_pair_structurally_using_any_chain_locator(tmp_path):
     from synthetic_aaf import edit_export
 
     flagged = TIMELINE.with_clip(1, chain_depth=2).export(tmp_path / "flagged.aaf")
-    # A length difference must not defeat locator pairing. Its regression rule
-    # belongs to #16; here we exercise the pairing keys only.
+    # A length difference must not defeat locator pairing or hide the regression.
     corrected = TIMELINE.with_clip(1, duration=3).export(
         tmp_path / "corrected.aaf", mode="linked",
     )
@@ -205,8 +204,8 @@ def test_duplicate_uses_pair_structurally_using_any_chain_locator(tmp_path):
     events = compare(flagged, corrected)
 
     assert events[-1]["paired_clips"] == 4
-    assert events[-1]["blocking_regressions"] == 0
-    assert events[-1]["verdict"] == "PASS"
+    assert events[-1]["blocking_regressions"] == 4
+    assert events[-1]["verdict"] == "FAIL"
     uses = [item for item in diff_items(events, "persisting")
             if item["corrected_finding"]["track"]["slot_id"] == 3]
     assert [(item["flagged_finding"]["record_in_timecode"],
@@ -310,8 +309,8 @@ def test_last_fallback_pairs_without_matching_locators_or_mob_ids(tmp_path):
     events = compare(flagged, corrected)
 
     assert events[-1]["paired_clips"] == 3
-    assert events[-1]["blocking_regressions"] == 0
-    assert events[-1]["verdict"] == "PASS"
+    assert events[-1]["blocking_regressions"] == 4
+    assert events[-1]["verdict"] == "FAIL"
 
 
 def test_locator_key_requires_clip_name_agreement(tmp_path):
@@ -410,10 +409,321 @@ def test_duplicate_ties_follow_structure_even_when_record_order_is_reversed(tmp_
     events = compare(flagged, corrected)
 
     assert events[-1]["paired_clips"] == 4
-    assert events[-1]["blocking_regressions"] == 0
+    assert events[-1]["blocking_regressions"] == 2
     uses = [item for item in diff_items(events, "persisting")
             if item["corrected_finding"]["track"]["slot_id"] == 3]
     assert [(item["flagged_finding"]["record_in_timecode"],
              item["corrected_finding"]["record_in_timecode"]) for item in uses] == [
         ("00:00:00:10", "00:00:00:00"), ("00:00:00:00", "00:00:00:10"),
+    ]
+
+
+def test_early_filler_reports_later_sync_shifts_without_drops_or_adds(tmp_path):
+    timeline = TIMELINE.with_clip(2, record_start=4).with_clip(3, record_start=8)
+    flagged = timeline.export(tmp_path / "flagged.aaf")
+    corrected = (timeline.with_clip(2, record_start=5).with_clip(3, record_start=9)
+                 .export(tmp_path / "corrected.aaf", mode="linked"))
+
+    events = compare(flagged, corrected)
+
+    shifts = diff_items(events, "sync_shift")
+    assert len(shifts) == 2
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert events[-1]["blocking_regressions"] == 3
+    assert diff_items(events, "reel_length_change")[0]["delta_frames"] == 1
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+    assert not diff_items(events, "whole_reel_offset")
+    assert [(item["clip_name"], item["delta_frames"]) for item in shifts] == [
+        ("Clip 2", 1), ("Clip 3", 1),
+    ]
+    assert all(item["blocking"] and "moved by 1 frame" in item["message"] for item in shifts)
+    assert shifts[0]["flagged_position"] == {
+        "track": {"slot_id": 4, "name": "Audio 2"},
+        "record_in_timecode": "00:00:00:04", "record_in_frames": 4,
+        "source_in_frames": 2, "length_frames": 2,
+    }
+    assert shifts[0]["corrected_position"] == {
+        "track": {"slot_id": 4, "name": "Audio 2"},
+        "record_in_timecode": "00:00:00:05", "record_in_frames": 5,
+        "source_in_frames": 2, "length_frames": 2,
+    }
+    assert compare(flagged, corrected) == events
+
+
+def test_whole_reel_offset_is_summarised_once_before_clip_diffs(tmp_path):
+    flagged = TIMELINE.export(tmp_path / "flagged.aaf")
+    corrected = TIMELINE
+    for number in range(1, 4):
+        corrected = corrected.with_clip(number, record_start=10)
+    corrected = corrected.export(tmp_path / "corrected.aaf", mode="linked")
+
+    events = compare(flagged, corrected)
+
+    summary = diff_items(events, "whole_reel_offset")
+    assert len(summary) == 1
+    assert diff_items(events)[0] == summary[0]
+    assert summary[0]["message"] == "Whole reel moved by 10 frames."
+    assert summary[0]["delta_frames"] == 10
+    assert summary[0]["blocking"] is True
+    assert summary[0]["paired_clips"] == 3
+    assert len(diff_items(events, "sync_shift")) == 3
+    assert all(item["delta_frames"] == 10 for item in diff_items(events, "sync_shift"))
+    assert events[-1]["verdict"] == "FAIL"
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+
+
+def test_source_slip_pairs_remaining_clip_and_reports_exact_delta(tmp_path):
+    flagged = TIMELINE.export(tmp_path / "flagged.aaf")
+    corrected = TIMELINE.with_clip(2, head=7).export(
+        tmp_path / "corrected.aaf", mode="linked",
+    )
+
+    events = compare(flagged, corrected)
+
+    slips = diff_items(events, "source_slip")
+    assert len(slips) == 1
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert events[-1]["blocking_regressions"] == 1
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+    assert slips[0]["delta_frames"] == 5
+    assert slips[0]["flagged_position"]["source_in_frames"] == 2
+    assert slips[0]["corrected_position"]["source_in_frames"] == 7
+    assert slips[0]["flagged_position"]["record_in_frames"] == 0
+    assert slips[0]["corrected_position"]["record_in_frames"] == 0
+    assert slips[0]["flagged_position"]["track"] == {"slot_id": 4, "name": "Audio 2"}
+    assert slips[0]["corrected_position"]["track"] == {"slot_id": 4, "name": "Audio 2"}
+    assert "5 frames" in slips[0]["message"]
+
+
+def test_three_frame_trim_is_length_change_with_both_positions(tmp_path):
+    timeline = TIMELINE.with_clip(2, duration=8).with_clip(3, duration=12)
+    flagged = timeline.export(tmp_path / "flagged.aaf")
+    corrected = timeline.with_clip(2, duration=5).export(
+        tmp_path / "corrected.aaf", mode="linked",
+    )
+
+    events = compare(flagged, corrected)
+
+    changes = diff_items(events, "length_change")
+    assert len(changes) == 1
+    assert changes[0]["delta_frames"] == -3
+    assert changes[0]["flagged_position"]["length_frames"] == 8
+    assert changes[0]["corrected_position"]["length_frames"] == 5
+    assert changes[0]["flagged_position"]["record_in_timecode"] == "00:00:00:00"
+    assert changes[0]["corrected_position"]["record_in_timecode"] == "00:00:00:00"
+    assert changes[0]["blocking"] is True
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert events[-1]["blocking_regressions"] == 1
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+
+
+@pytest.mark.parametrize("change", [{"track_slot": 8}, {"track_name": "Dialogue"}])
+def test_sound_track_change_retains_pair_and_carries_positions(tmp_path, change):
+    from synthetic_aaf import edit_export
+
+    flagged, corrected = TIMELINE.export_pair(tmp_path)
+    with edit_export(corrected) as aaf:
+        slot = next(aaf.content.compositionmobs()).slot_at(4)
+        if "track_slot" in change:
+            slot.slot_id = change["track_slot"]
+            slot.name = "Audio 6"
+        else:
+            slot.name = change["track_name"]
+
+    events = compare(flagged, corrected)
+
+    changes = diff_items(events, "track_change")
+    assert len(changes) == 1
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert events[-1]["blocking_regressions"] == 1
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+    assert changes[0]["flagged_position"]["track"] == {"slot_id": 4, "name": "Audio 2"}
+    assert changes[0]["corrected_position"]["track"] == (
+        {"slot_id": 8, "name": "Audio 6"} if "track_slot" in change else
+        {"slot_id": 4, "name": "Dialogue"}
+    )
+    assert changes[0]["delta_frames"] == 0
+    assert changes[0]["flagged_position"]["record_in_frames"] == 0
+    assert changes[0]["corrected_position"]["record_in_frames"] == 0
+
+
+def test_changed_start_timecode_is_blocking_regression_not_error(tmp_path):
+    from synthetic_aaf import edit_export
+
+    flagged, corrected = TIMELINE.export_pair(tmp_path)
+    with edit_export(corrected) as aaf:
+        next(aaf.content.compositionmobs()).slot_at(1).segment.start = 240
+
+    events = compare(flagged, corrected)
+
+    changes = diff_items(events, "start_timecode_change")
+    assert len(changes) == 1
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert changes[0]["blocking"] is True
+    assert changes[0]["delta_frames"] == 240
+    assert changes[0]["flagged_position"]["record_in_timecode"] == "00:00:00:00"
+    assert changes[0]["corrected_position"]["record_in_timecode"] == "00:00:10:00"
+    assert changes[0]["flagged_position"]["record_in_frames"] == 0
+    assert changes[0]["corrected_position"]["record_in_frames"] == 240
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+
+
+def test_changed_reel_length_is_regression_even_with_unchanged_clips(tmp_path):
+    from synthetic_aaf import edit_export
+
+    flagged, corrected = TIMELINE.export_pair(tmp_path)
+    with edit_export(corrected) as aaf:
+        composition = next(aaf.content.compositionmobs())
+        composition.slot_at(1).segment.length += 7
+        composition.slot_at(2).segment.length += 7
+        for slot in composition.slots:
+            if slot.media_kind == "Sound":
+                slot.segment.components.append(aaf.create.Filler(media_kind="sound", length=7))
+
+    events = compare(flagged, corrected)
+
+    changes = diff_items(events, "reel_length_change")
+    assert len(changes) == 1
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert events[-1]["blocking_regressions"] == 1
+    assert changes[0]["delta_frames"] == 7
+    assert changes[0]["flagged_position"]["length_frames"] == 2
+    assert changes[0]["corrected_position"]["length_frames"] == 9
+    assert not diff_items(events, "sync_shift")
+
+
+def test_simultaneous_changes_follow_corrected_track_record_and_rule_order(tmp_path):
+    timeline = TIMELINE.with_clip(2, duration=8).with_clip(3, duration=12)
+    flagged = timeline.export(tmp_path / "flagged.aaf")
+    corrected = timeline.with_clip(2, duration=5, record_start=4, track_slot=8).export(
+        tmp_path / "corrected.aaf", mode="linked",
+    )
+
+    events = compare(flagged, corrected)
+
+    assert [(item.get("corrected_finding") or item)["track"]["slot_id"]
+            for item in diff_items(events)] == [3, 5, 8, 8, 8, 8]
+    assert [(item["kind"], item.get("rule_id")) for item in diff_items(events)[2:]] == [
+        ("length_change", None), ("persisting", "short_handles"),
+        ("sync_shift", None), ("track_change", None),
+    ]
+    assert events[-1]["blocking_regressions"] == 3
+    assert compare(flagged, corrected) == events
+
+
+def test_whole_reel_summary_carries_positions_of_every_paired_clip(tmp_path):
+    flagged = TIMELINE.export(tmp_path / "flagged.aaf")
+    corrected = TIMELINE
+    for number in range(1, 4):
+        corrected = corrected.with_clip(number, record_start=10)
+    corrected = corrected.export(tmp_path / "corrected.aaf", mode="linked")
+
+    events = compare(flagged, corrected)
+
+    summary = diff_items(events, "whole_reel_offset")[0]
+    assert [position["record_in_frames"] for position in summary["flagged_positions"]] == [0, 0, 0]
+    assert [position["record_in_frames"] for position in summary["corrected_positions"]] == [10, 10, 10]
+    assert [position["track"]["slot_id"] for position in summary["corrected_positions"]] == [3, 4, 5]
+
+
+def test_one_sample_source_slip_preserves_fractional_sequence_frames(tmp_path):
+    from synthetic_aaf import edit_export
+
+    flagged, corrected = TIMELINE.export_pair(tmp_path)
+    with edit_export(corrected) as aaf:
+        master = next(mob for mob in aaf.content.mastermobs() if mob.name == "Clip 2")
+        master.slot_at(1).segment.components[0].start += 1
+
+    events = compare(flagged, corrected)
+
+    slips = diff_items(events, "source_slip")
+    assert len(slips) == 1
+    assert slips[0]["delta_frames"] == "1/2002"
+    assert slips[0]["flagged_position"]["source_in_frames"] == 2
+    assert slips[0]["corrected_position"]["source_in_frames"] == "4005/2002"
+    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["paired_clips"] == 3
+    assert not diff_items(events, "dropped")
+    assert not diff_items(events, "added")
+
+
+@pytest.mark.parametrize("change", [
+    {"record_start": 1}, {"track_slot": 8},
+    {"name": "Unrelated", "media_name": "unrelated.wav"},
+    {"media_name": "unrelated.wav"},
+])
+def test_source_slip_requires_same_track_record_position_and_media_identity(tmp_path, change):
+    flagged = TIMELINE.export(tmp_path / "flagged.aaf")
+    corrected = TIMELINE.with_clip(2, head=7, **change).export(
+        tmp_path / "corrected.aaf", mode="linked",
+    )
+
+    events = compare(flagged, corrected)
+
+    assert not diff_items(events, "source_slip")
+    assert events[-1]["paired_clips"] == 2
+    assert len(diff_items(events, "dropped")) == len(diff_items(events, "added")) == 1
+    assert events[-1]["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize("delta,label", [(-1, "01:00:00:03"), (1, "01:00:00:05")])
+def test_sync_positions_include_sequence_start_and_signed_frame_delta(tmp_path, delta, label):
+    from synthetic_aaf import edit_export
+
+    timeline = TIMELINE.with_clip(2, record_start=4).with_clip(3, duration=12)
+    flagged = timeline.export(tmp_path / "flagged.aaf")
+    corrected = timeline.with_clip(2, record_start=4 + delta).export(
+        tmp_path / "corrected.aaf", mode="linked",
+    )
+    for path in (flagged, corrected):
+        with edit_export(path) as aaf:
+            next(aaf.content.compositionmobs()).slot_at(1).segment.start = 86400
+
+    events = compare(flagged, corrected)
+
+    shifts = diff_items(events, "sync_shift")
+    assert len(shifts) == 1
+    assert shifts[0]["delta_frames"] == delta
+    assert shifts[0]["flagged_position"]["record_in_frames"] == 86404
+    assert shifts[0]["corrected_position"]["record_in_frames"] == 86404 + delta
+    assert shifts[0]["flagged_position"]["record_in_timecode"] == "01:00:00:04"
+    assert shifts[0]["corrected_position"]["record_in_timecode"] == label
+    assert events[-1]["blocking_regressions"] == 1
+
+
+def test_diff_rule_order_spans_duplicate_occurrences_at_the_same_position(tmp_path):
+    from synthetic_aaf import edit_export, operation_group
+
+    flagged, corrected = TIMELINE.export_pair(tmp_path)
+    for path in (flagged, corrected):
+        with edit_export(path) as aaf:
+            slot = next(aaf.content.compositionmobs()).slot_at(3)
+            original = slot.segment.components[0].copy()
+            group = operation_group(aaf, length=3, operation="dissolve")
+            group.segments.append(original.copy())
+            second = original.copy()
+            if path == corrected:
+                second.length = 3
+            group.segments.append(second)
+            slot.segment = group
+
+    events = compare(flagged, corrected)
+
+    items = [item for item in diff_items(events)
+             if (item.get("corrected_finding") or item).get("track", {}).get("slot_id") == 3]
+    assert [(item["kind"], item.get("rule_id")) for item in items] == [
+        ("length_change", None), ("persisting", "short_handles"),
+        ("persisting", "short_handles"),
     ]

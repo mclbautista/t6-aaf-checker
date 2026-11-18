@@ -17,6 +17,7 @@ class TimelineClip:
     track_name: str
     record_start: Fraction
     record_in_timecode: str
+    record_in_frames: Fraction
     name: str | None
     source_file: str | None
     embedded: bool
@@ -34,6 +35,33 @@ class TimelineClip:
     structural_order: int
     track_type: str
     media_mob_id: MobID
+
+
+@dataclass(frozen=True)
+class SequenceTiming:
+    edit_rate: Fraction
+    start: Fraction
+    start_label: str
+    length: Fraction
+
+
+def sequence_timings(aaf):
+    timings = []
+    for composition in aaf.content.compositionmobs():
+        timecode = next((slot for slot in composition.slots
+                         if slot.media_kind == "Timecode"), None)
+        sound = next((slot for slot in composition.slots
+                      if slot.media_kind == "Sound"), None)
+        rate = Fraction(timecode.edit_rate if timecode else sound.edit_rate if sound else 24)
+        start = Fraction(timecode.segment.start if timecode else 0)
+        fps = timecode.segment.fps if timecode else round(rate)
+        drop = timecode.segment.drop if timecode else False
+        length = max((Fraction(slot.segment.length, 1) / slot.edit_rate * rate
+                      for slot in composition.slots
+                      if slot.media_kind in ("Sound", "Picture", "Timecode")),
+                     default=Fraction(0))
+        timings.append(SequenceTiming(rate, start, timecode_label(int(start), fps, drop), length))
+    return timings
 
 
 def locator_path(url):
@@ -218,6 +246,8 @@ def sound_clips(aaf, path, config):
                 clips.append(TimelineClip(
                     slot.slot_id, slot.name, record_start,
                     timecode_label(frames, fps, drop),
+                    (Fraction(timecode_start, 1) / timecode_rate + record_start)
+                    * Fraction(slot.edit_rate),
                     master.name if master else None, source_file,
                     embedded, linked_path, outside_delivery, essence_id, descriptor,
                     Fraction(slot.edit_rate), used_start, used_end,

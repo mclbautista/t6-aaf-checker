@@ -16,7 +16,7 @@ from .format import descriptor_properties, linked_properties, mismatch_message, 
 from .handles import short_handles_message
 from .levels import EmbeddedPeak, linked_peak
 from .metadata import IXMLReader, linked_ixml, metadata_values, missing_metadata_message
-from .timeline import TimelineClip, sound_clips
+from .timeline import SequenceTiming, TimelineClip, sequence_timings, sound_clips
 
 
 @dataclass
@@ -27,6 +27,7 @@ class CheckResult:
     clip_findings: list[list[dict]]
     edit_rates: set[Fraction]
     path: str
+    sequence_timings: list[SequenceTiming]
 
 
 def clip_location(clip):
@@ -91,6 +92,7 @@ def check_aaf(path, config, emit):
                 for slot in composition.slots if slot.media_kind in ("Sound", "Timecode")
             }
             clips = sound_clips(aaf, path, config)
+            timings = sequence_timings(aaf)
             emit(
                 "progress", aaf_path=str(path), clips_done=0, clips_total=len(clips),
                 bytes_read=bytes_read,
@@ -238,5 +240,5 @@ def check_aaf(path, config, emit):
         for finding in findings:
             emit("finding", **finding)
     verdict = "FAIL" if any(finding["severity"] == "FAIL" for finding in findings) else "PASS"
-    return CheckResult(verdict, clips, findings, clip_findings, edit_rates, str(path))
+    return CheckResult(verdict, clips, findings, clip_findings, edit_rates, str(path), timings)
 
