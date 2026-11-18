@@ -4,7 +4,7 @@ import pytest
 from aaf2.essence import TapeDescriptor
 
 from synthetic_aaf import Clip, Timeline, edit_export
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 from test_levels_cli import configure_bundle, findings
 
 
@@ -187,7 +187,7 @@ def test_metadata_is_per_occurrence_ordered_and_inputs_stay_read_only(tmp_path, 
         (5, "00:00:02:00", "missing_field_recorder_metadata"),
     ]
     assert events[-1]["verdict"] == "PASS"
-    assert events == check(path)
+    assert without_report_paths(events) == without_report_paths(check(path))
     for item in inputs:
         with item.open("rb") as stream:
             assert hashlib.file_digest(stream, "sha256").hexdigest() == before[item]

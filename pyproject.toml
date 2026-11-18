@@ -11,10 +11,11 @@ dependencies = [
     "pyaaf2==1.7.1",
     "soundfile==0.14.0",
     "numpy==2.5.5",
+    "reportlab==5.1.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest==9.2.0"]
+test = ["pytest==9.2.0", "pypdf==7.1.1"]
 
 [project.scripts]
 aaf-qc-worker = "aaf_qc_worker.cli:main"

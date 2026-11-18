@@ -2,7 +2,7 @@
 
 from sparse_aaf import place_essence_at_boundary
 from synthetic_aaf import Timeline, edit_export, patch_header
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 
 
 def test_container_failure_still_checks_every_clip(tmp_path):
@@ -76,7 +76,7 @@ def test_shared_high_stream_lists_both_timeline_occurrences_in_record_order(tmp_
         ({"slot_id": 4, "name": "Audio 2"}, "00:00:01:00", "Clip 2"),
         ({"slot_id": 5, "name": "Audio 3"}, "00:00:00:00", "Clip 3"),
     ]
-    assert second == first
+    assert without_report_paths(second) == without_report_paths(first)
 
 
 def test_valid_large_container_has_no_likely_empty_list_even_with_high_audio(tmp_path):

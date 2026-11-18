@@ -7,7 +7,7 @@ import struct
 import pytest
 
 from synthetic_aaf import Timeline, edit_export
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 from test_levels_cli import findings
 
 
@@ -266,7 +266,7 @@ def test_file_findings_precede_clip_findings_and_checks_remain_read_only(tmp_pat
                for item in findings(events)[:3])
     assert [item["track"]["slot_id"] for item in findings(events)[3:]] == [3, 5]
     assert events[-1]["verdict"] == "FAIL"
-    assert events == check(path)
+    assert without_report_paths(events) == without_report_paths(check(path))
     for item in inputs:
         with item.open("rb") as stream:
             assert hashlib.file_digest(stream, "sha256").hexdigest() == before[item]

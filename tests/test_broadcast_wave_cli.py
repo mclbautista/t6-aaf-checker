@@ -5,7 +5,7 @@ import struct
 import pytest
 
 from synthetic_aaf import Clip, Timeline, edit_export
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 from test_levels_cli import findings
 
 
@@ -100,4 +100,4 @@ def test_shared_essence_gives_one_info_per_occurrence_in_finding_order(tmp_path)
         (6, "00:00:00:00", "no_broadcast_wav_chunk"),
     ]
     assert events[-1]["verdict"] == "PASS"
-    assert events == check(path)
+    assert without_report_paths(events) == without_report_paths(check(path))

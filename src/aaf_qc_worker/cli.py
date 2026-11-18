@@ -1,17 +1,25 @@
 """Command-line NDJSON contract consumed by the app shell."""
 
 import argparse
+from datetime import datetime
 from importlib.metadata import version
 from importlib.resources import files
 import json
 from pathlib import Path
+import signal
 
 from .check import check_aaf
 from .compare import compare_checks
+from .report import write_check_reports
 
 
 def emit(event_type, **fields):
     print(json.dumps({"schema_version": 1, "type": event_type, **fields}), flush=True)
+
+
+def terminate(signum, frame):
+    # Unwind temporary reports and any partially published pair on cancellation.
+    raise SystemExit(128 + signum)
 
 
 def run_compare(flagged, corrected, config):
@@ -44,6 +52,15 @@ def main():
     compare.add_argument("--corrected", type=Path, required=True)
     args = parser.parse_args()
 
+    signal.signal(signal.SIGTERM, terminate)
+    run_datetime = datetime.now().astimezone()
+    findings = []
+
+    def check_emit(event_type, **fields):
+        if event_type == "finding":
+            findings.append(fields)
+        emit(event_type, **fields)
+
     try:
         config = json.loads(files("aaf_qc_worker").joinpath("rules.json").read_text())
         paths = ({"aaf_path": str(args.aaf)} if args.command == "check" else {
@@ -54,17 +71,26 @@ def main():
             worker_version=version("aaf-gate-worker"), rule_version=config["rule_version"],
         )
         if args.command == "check":
-            fields = {"verdict": check_aaf(args.aaf, config, emit).verdict}
+            fields = {"verdict": check_aaf(args.aaf, config, check_emit).verdict}
         else:
             fields = run_compare(args.flagged, args.corrected, config)
     except Exception as error:
         # The process boundary turns reader and I/O failures into a single event.
-        emit(
-            "terminal", verdict="ERROR",
+        fields = dict(
+            verdict="ERROR",
             reason=f"Cannot complete {args.command}: {str(error) or type(error).__name__}",
-            report_paths=[],
         )
-        return 2
 
-    emit("terminal", **fields, report_paths=[])
+    report_paths = []
+    if args.command == "check":
+        try:
+            report_paths = write_check_reports(
+                args.aaf, fields["verdict"], findings,
+                app_version=version("aaf-gate-worker"), rule_version=config["rule_version"],
+                reason=fields.get("reason"),
+                run_datetime=run_datetime,
+            )
+        except Exception as error:
+            fields["report_error"] = f"Report not saved: {str(error) or type(error).__name__}"
+    emit("terminal", **fields, report_paths=report_paths)
     return {"PASS": 0, "FAIL": 1, "ERROR": 2}[fields["verdict"]]
