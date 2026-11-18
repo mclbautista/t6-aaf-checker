@@ -13,6 +13,7 @@
     "severity": "FAIL",
     "sector_shifts": {"3": 9, "4": 12},
     "max_file_bytes": {"3": 2147483648},
+    "likely_empty_offset_bytes": 2147483648,
     "fix_instruction": "Export with linked media."
   },
   "offline_clip": {

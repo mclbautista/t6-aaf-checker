@@ -3,6 +3,24 @@
 import struct
 
 
+def stream_reaches_offset(stream, boundary):
+    """Inspect actual chain positions, including fragmented and mini streams.
+
+    pyaaf2 builds its compact FAT array once from the header and DIFAT when the
+    AAF opens. Stream.fat_chain walks that shared table; these are sector IDs,
+    not an estimate from a stream's start and length. No essence is read here.
+    """
+    storage = stream.storage
+    for sid in stream.fat_chain:
+        offset = 0
+        if stream.is_mini_stream():
+            index, offset = divmod(sid * storage.mini_stream_sector_size, storage.sector_size)
+            sid = storage.mini_stream_chain[index]
+        if (sid + 1) * storage.sector_size + offset >= boundary:
+            return True
+    return False
+
+
 def corruption_message(header, file_size, rule):
     if len(header) != 512:
         raise ValueError("Cannot read a complete 512-byte CFB header.")

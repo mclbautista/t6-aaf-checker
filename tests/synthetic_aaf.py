@@ -21,10 +21,11 @@ depth. One clip occupies each sound slot; supply a different ``clips`` tuple for
 a different timeline. Durations, positions and handles are sequence frames.
 
 Embedded essence contains complete RIFF/WAVE streams keyed by the file SourceMob
-ID. Linked WAVs live in a unique ``<AAF stem>_media`` folder beside each export;
-the absolute file-URI locators point into an absent export folder. Both modes
-retain those stale locators. Tape is a physical SourceMob name; scene and take
-are MasterMob comments, matching the configured metadata fallback sources.
+ID. Its unnamed file mob has a WAVEDescriptor without locators and references an
+import mob carrying the original media locator, then the tape mob. Linked WAVs
+live in a unique ``<AAF stem>_media`` folder beside each export, with a locator on
+the file mob. All locators point into an absent export folder. Tape is a physical
+SourceMob name; scene and take are MasterMob comments.
 
 ``patch_header`` changes CFB version/sector-shift bytes, optionally on a copy.
 ``truncate_bytes`` removes WAV data while preserving the original header sizes
@@ -47,6 +48,7 @@ import shutil
 import struct
 import tempfile
 import wave
+from urllib.parse import unquote, urlsplit
 
 import aaf2
 
@@ -133,15 +135,16 @@ class Timeline:
                 for clip in self.clips:
                     wav_path = media_root / clip.media_name
                     samples = _write_wav(wav_path, clip)
-                    master, source = _audio_chain(aaf, clip, samples)
+                    clip_mode = clip.media_mode or mode
                     # This path is never created. The delivered WAV is beside the
                     # AAF; embedded exports retain an equally stale locator.
-                    locator = aaf.create.NetworkLocator()
-                    locator["URLString"].value = (
+                    locator_url = (
                         path.parent / ".unavailable-export" / media_folder / clip.media_name
                     ).as_uri()
-                    source.descriptor["Locator"].append(locator)
-                    clip_mode = clip.media_mode or mode
+                    master, source = _audio_chain(
+                        aaf, clip, samples, embedded=clip_mode == "embedded",
+                        locator_url=locator_url, wav_path=wav_path,
+                    )
                     if clip_mode == "linked" and mode == "embedded":
                         delivered = path.parent / media_folder
                         delivered.mkdir(exist_ok=True)
@@ -263,7 +266,17 @@ def _write_wav(path: Path, clip: Clip) -> int:
     return samples
 
 
-def _audio_chain(aaf, clip: Clip, samples: int):
+def embedded_essence_by_name(aaf):
+    """Identify generated essence via its upstream import mob's media locator."""
+    result = {}
+    for essence in aaf.content.essencedata:
+        imported = essence.mob.slot_at(1).segment.mob
+        url = imported.descriptor["Locator"].value[0]["URLString"].value
+        result[Path(unquote(urlsplit(url).path)).name] = essence
+    return result
+
+
+def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_path):
     frames = clip.head + clip.duration + clip.tail
     tape = aaf.create.SourceMob(clip.tape)
     aaf.content.mobs.append(tape)
@@ -276,19 +289,38 @@ def _audio_chain(aaf, clip: Clip, samples: int):
     source = aaf.create.SourceMob(clip.media_name)
     aaf.content.mobs.append(source)
     source_slot = source.create_timeline_slot(EDIT_RATE, slot_id=1)
-    source_slot.segment = tape.create_source_clip(1, length=frames)
-    descriptor = aaf.create.PCMDescriptor()
-    source.descriptor = descriptor
-    for field, value in {
-        "SampleRate": clip.sample_rate,
-        "AudioSamplingRate": clip.sample_rate,
-        "Channels": clip.channels,
-        "QuantizationBits": clip.bits,
-        "BlockAlign": clip.channels * (clip.bits // 8),
-        "AverageBPS": clip.sample_rate * clip.channels * (clip.bits // 8),
-        "Length": samples,
-    }.items():
-        descriptor[field].value = value
+    locator = aaf.create.NetworkLocator()
+    locator["URLString"].value = locator_url
+    if embedded:
+        del source["Name"]
+        imported = aaf.create.SourceMob(f"Import{clip.name}")
+        aaf.content.mobs.append(imported)
+        imported.descriptor = aaf.create.ImportDescriptor()
+        imported.descriptor["Locator"].append(locator)
+        imported_slot = imported.create_timeline_slot(EDIT_RATE, slot_id=1)
+        imported_slot.segment = tape.create_source_clip(1, length=frames)
+        source_slot.segment = imported.create_source_clip(1, length=frames)
+        source.descriptor = aaf.create.WAVEDescriptor()
+        source.descriptor["SampleRate"].value = clip.sample_rate
+        source.descriptor["Length"].value = samples
+        # wave writes the RIFF header and PCM fmt chunk in the first 36 bytes.
+        with wav_path.open("rb") as wav:
+            source.descriptor["Summary"].value = bytearray(wav.read(36))
+    else:
+        source_slot.segment = tape.create_source_clip(1, length=frames)
+        descriptor = aaf.create.PCMDescriptor()
+        source.descriptor = descriptor
+        for field, value in {
+            "SampleRate": clip.sample_rate,
+            "AudioSamplingRate": clip.sample_rate,
+            "Channels": clip.channels,
+            "QuantizationBits": clip.bits,
+            "BlockAlign": clip.channels * (clip.bits // 8),
+            "AverageBPS": clip.sample_rate * clip.channels * (clip.bits // 8),
+            "Length": samples,
+        }.items():
+            descriptor[field].value = value
+        descriptor["Locator"].append(locator)
 
     master = aaf.create.MasterMob(clip.name)
     aaf.content.mobs.append(master)

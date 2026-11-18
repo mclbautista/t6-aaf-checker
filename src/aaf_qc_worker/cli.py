@@ -12,12 +12,21 @@ import aaf2
 from aaf2.exceptions import AAFError
 
 from .audio import AudioReader
-from .container import corruption_message
+from .container import corruption_message, stream_reaches_offset
 from .timeline import sound_clips
 
 
 def emit(event_type, **fields):
     print(json.dumps({"schema_version": 1, "type": event_type, **fields}), flush=True)
+
+
+def clip_location(clip):
+    return {
+        "track": {"slot_id": clip.slot_id, "name": clip.track_name},
+        "record_in_timecode": clip.record_in_timecode,
+        "clip_name": clip.name,
+        "source_file": clip.source_file,
+    }
 
 
 def check_aaf(path, config):
@@ -27,13 +36,10 @@ def check_aaf(path, config):
         file_size = os.fstat(stream.fileno()).st_size
     rule = config["container_corrupt"]
     message = corruption_message(header, file_size, rule)
+    findings = []
+    likely_empty_clips = []
     if message:
-        emit(
-            "progress", aaf_path=str(path), clips_done=0, clips_total=0,
-            bytes_read=bytes_read,
-        )
-        emit(
-            "finding",
+        findings.append(dict(
             aaf_path=str(path),
             rule_id="container_corrupt",
             rule_name=rule["name"],
@@ -44,8 +50,9 @@ def check_aaf(path, config):
             source_file=None,
             message=message,
             fix_instruction=rule["fix_instruction"],
-        )
-    else:
+            likely_empty_clips=likely_empty_clips,
+        ))
+    try:
         with aaf2.open(str(path), "r") as aaf:
             essence = {item.mob_id: item for item in aaf.content.essencedata}
             clips = sound_clips(aaf, path, config)
@@ -58,6 +65,10 @@ def check_aaf(path, config):
                 if clip.embedded:
                     try:
                         with closing(essence[clip.essence_id].open("r")) as stream:
+                            if message and stream_reaches_offset(
+                                stream, config["container_corrupt"]["likely_empty_offset_bytes"]
+                            ):
+                                likely_empty_clips.append(clip_location(clip))
                             for block in AudioReader(stream, config["audio_reader"]["chunk_bytes"]):
                                 bytes_read += len(block.data)
                                 emit(
@@ -73,25 +84,24 @@ def check_aaf(path, config):
                     rule_id = "media_outside_delivery_folder"
                 if rule_id:
                     rule = config[rule_id]
-                    emit(
-                        "finding",
+                    findings.append(dict(
                         aaf_path=str(path),
                         rule_id=rule_id,
                         rule_name=rule["name"],
                         severity=rule["severity"],
-                        track={"slot_id": clip.slot_id, "name": clip.track_name},
-                        record_in_timecode=clip.record_in_timecode,
-                        clip_name=clip.name,
-                        source_file=clip.source_file,
+                        **clip_location(clip),
                         message=rule["message"],
                         fix_instruction=rule["fix_instruction"],
-                    )
-                    message = rule["message"]
+                    ))
                 emit(
                     "progress", aaf_path=str(path), clips_done=done,
                     clips_total=len(clips), bytes_read=bytes_read,
                 )
-    return "FAIL" if message else "PASS"
+    finally:
+        # Preserve known findings even if pyaaf2 cannot open the container.
+        for finding in findings:
+            emit("finding", **finding)
+    return "FAIL" if findings else "PASS"
 
 
 def main():
