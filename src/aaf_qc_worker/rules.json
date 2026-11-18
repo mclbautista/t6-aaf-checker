@@ -1,6 +1,7 @@
 {
   "rule_version": "1.0.0",
   "linked_media": {"levels_above": 2},
+  "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
   "format_mismatch": {
     "name": "Format mismatch",
@@ -34,5 +35,18 @@
     "severity": "FAIL",
     "message": "Linked media exists only outside the delivery folder.",
     "fix_instruction": "Include the media in the delivery folder and re-export the AAF."
+  },
+  "digital_silence": {
+    "name": "Digital silence",
+    "severity": "FAIL",
+    "message": "Every sample in the used range plus handles is digital zero.",
+    "fix_instruction": "Check the source audio in the edit and re-export with audible media."
+  },
+  "low_level": {
+    "name": "Low level",
+    "severity": "INFO",
+    "floor_dbfs": -90,
+    "message": "Peak {peak_dbfs:.2f} dBFS over the used range plus handles is at or below {floor_dbfs:g} dBFS.",
+    "fix_instruction": null
   }
 }

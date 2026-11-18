@@ -5,6 +5,7 @@ from contextlib import closing
 from importlib.metadata import version
 from importlib.resources import files
 import json
+import math
 import os
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from aaf2.exceptions import AAFError
 from .audio import AudioReader
 from .container import corruption_message, stream_reaches_offset
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
+from .levels import EmbeddedPeak, linked_peak
 from .timeline import sound_clips
 
 
@@ -65,6 +67,7 @@ def check_aaf(path, config):
                 first_finding = len(findings)
                 rule_id = None
                 media_format = None
+                peak = None
                 if clip.embedded:
                     reader = None
                     try:
@@ -74,12 +77,15 @@ def check_aaf(path, config):
                             ):
                                 likely_empty_clips.append(clip_location(clip))
                             reader = AudioReader(stream, config["audio_reader"]["chunk_bytes"])
+                            scan = EmbeddedPeak(clip.scan_start, clip.scan_end)
                             for block in reader:
+                                scan.consume(block, reader.format)
                                 bytes_read += len(block.data)
                                 emit(
                                     "progress", aaf_path=str(path), clips_done=done - 1,
                                     clips_total=len(clips), bytes_read=bytes_read,
                                 )
+                            peak = scan.peak
                     except (AAFError, OSError, ValueError, EOFError, IndexError, KeyError, AssertionError):
                         # A readable AAF with damaged essence is a clip FAIL.
                         rule_id = "embedded_audio_unreadable"
@@ -123,6 +129,27 @@ def check_aaf(path, config):
                         **clip_location(clip), message=format_message,
                         fix_instruction=rule["fix_instruction"],
                     ))
+                if not clip.embedded and clip.linked_path and not format_errors:
+                    peak = linked_peak(
+                        clip.linked_path, config["audio_reader"]["chunk_bytes"],
+                        clip.scan_start, clip.scan_end,
+                    )
+                level_rule = None
+                if peak == 0:
+                    level_rule = "digital_silence"
+                elif peak is not None and peak <= 10 ** (config["low_level"]["floor_dbfs"] / 20):
+                    level_rule = "low_level"
+                if level_rule:
+                    rule = config[level_rule]
+                    findings.append(dict(
+                        aaf_path=str(path), rule_id=level_rule,
+                        rule_name=rule["name"], severity=rule["severity"],
+                        **clip_location(clip), message=rule["message"].format(
+                            peak_dbfs=20 * math.log10(peak) if peak else None,
+                            floor_dbfs=config["low_level"]["floor_dbfs"],
+                        ),
+                        fix_instruction=rule["fix_instruction"],
+                    ))
                 findings[first_finding:] = sorted(
                     findings[first_finding:], key=lambda finding: finding["rule_id"]
                 )
@@ -134,7 +161,7 @@ def check_aaf(path, config):
         # Preserve known findings even if pyaaf2 cannot open the container.
         for finding in findings:
             emit("finding", **finding)
-    return "FAIL" if findings else "PASS"
+    return "FAIL" if any(finding["severity"] == "FAIL" for finding in findings) else "PASS"
 
 
 def main():

@@ -16,6 +16,7 @@ new timeline, so reds cannot mutate their green counterparts. Clip fields cover
 sample rate, channels, bit depth, PCM sample value (zero for silence), metadata,
 handles and timing. ``media_mode`` overrides the export mode for one clip;
 ``chain_depth`` inserts upstream mobs with stale locators before its file mob.
+``sample_points`` overrides individual sample frames for boundary pulses.
 Amplitudes are signed integer PCM values in the selected bit
 depth. One clip occupies each sound slot; supply a different ``clips`` tuple for
 a different timeline. Durations, positions and handles are sequence frames.
@@ -75,6 +76,7 @@ class Clip:
     bits: int = 24
     channels: int = 1
     sample_value: int = 2**14
+    sample_points: tuple[tuple[int, int], ...] = ()
     tape: str = "Synthetic tape"
     scene: str = "Scene 1"
     take: str = "1"
@@ -264,7 +266,14 @@ def _write_wav(path: Path, clip: Clip) -> int:
             wav.setparams((clip.channels, width, clip.sample_rate, 0, "NONE", "not compressed"))
             for start in range(0, samples, CHUNK_FRAMES):
                 count = min(CHUNK_FRAMES, samples - start)
-                wav.writeframesraw(block[:count * clip.channels * width])
+                data = bytearray(block[:count * clip.channels * width])
+                for index, value in clip.sample_points:
+                    if start <= index < start + count:
+                        offset = (index - start) * clip.channels * width
+                        data[offset:offset + clip.channels * width] = (
+                            value.to_bytes(width, "little", signed=True) * clip.channels
+                        )
+                wav.writeframesraw(data)
     if clip.odd_unpadded:
         # Premiere Pro writes no RIFF pad byte after odd-sized data and its
         # RIFF length excludes the pad.
