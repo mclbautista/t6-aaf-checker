@@ -32,7 +32,8 @@ the file mob. Both modes default to WAVEDescriptor with a WAV Summary;
 ``descriptor_kind="pcm"`` selects PCMDescriptor fields instead. ``wav_subtype``
 and ``wav_container`` select libsndfile-generated format variants. All locators
 point into an absent export folder. Tape is a physical
-SourceMob name; scene and take are MasterMob comments.
+SourceMob name; scene and take are MasterMob comments. ``ixml`` accepts field
+pairs (or raw XML bytes) for a WAV iXML chunk placed after data in either mode.
 
 ``patch_header`` changes CFB version/sector-shift bytes, optionally on a copy.
 ``truncate_bytes`` removes WAV data while preserving the original header sizes
@@ -55,6 +56,7 @@ import shutil
 import struct
 import tempfile
 import wave
+from xml.etree import ElementTree
 from urllib.parse import unquote, urlsplit
 
 import aaf2
@@ -83,6 +85,7 @@ class Clip:
     tape: str = "Synthetic tape"
     scene: str = "Scene 1"
     take: str = "1"
+    ixml: tuple[tuple[str, str], ...] | bytes | None = None
     truncate_bytes: int = 0
     media_mode: str | None = None
     chain_depth: int = 0
@@ -286,6 +289,25 @@ def _write_wav(path: Path, clip: Clip) -> int:
             stream.truncate(44 + data_bytes)
             stream.seek(4)
             stream.write(struct.pack("<I", 36 + data_bytes))
+    if clip.ixml is not None:
+        if isinstance(clip.ixml, bytes):
+            payload = clip.ixml
+        else:
+            root = ElementTree.Element("BWFXML")
+            for key, value in clip.ixml:
+                ElementTree.SubElement(root, key).text = value
+            payload = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+        with path.open("r+b") as stream:
+            stream.seek(0, 2)
+            if stream.tell() % 2:
+                stream.write(b"\0")
+            stream.write(struct.pack("<4sI", b"iXML", len(payload)))
+            stream.write(payload)
+            if len(payload) % 2:
+                stream.write(b"\0")
+            riff_size = stream.tell() - 8
+            stream.seek(4)
+            stream.write(struct.pack("<I", riff_size))
     if clip.truncate_bytes:
         data_bytes = samples * clip.channels * width
         if not 0 < clip.truncate_bytes <= data_bytes:
