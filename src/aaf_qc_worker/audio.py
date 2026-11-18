@@ -7,7 +7,10 @@ The caller owns the stream and opens it read-only.
 """
 
 from dataclasses import dataclass
+import math
 import struct
+
+import numpy as np
 
 
 class AudioUnreadable(ValueError):
@@ -43,6 +46,47 @@ class AudioBlock:
     chunk_id: bytes | None
     offset: int
     data: bytes | bytearray
+
+
+class EmbeddedPCMWindow:
+    """Decode bounded PCM blocks, retaining at most a partial sample frame.
+
+    Bounds are exact seconds. A sample belongs to the half-open window when
+    its start lies inside it, so both bounds round up to sample frames.
+    Values are normalized float64, matching libsndfile's decoded samples.
+    """
+
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+        self.frames_read = 0
+        self.end_sample = None
+        self.pending = b""
+
+    def consume(self, block, fmt):
+        if block.chunk_id != b"data" or fmt is None or fmt.encoding != 1:
+            return None
+        if fmt.bits not in (16, 24, 32) or fmt.block_align != fmt.channels * (fmt.bits // 8):
+            return None
+        data = self.pending + block.data
+        count = len(data) // fmt.block_align * fmt.block_align
+        self.pending = data[count:]
+        first = max(0, math.ceil(self.start * fmt.sample_rate) - self.frames_read)
+        last = count // fmt.block_align
+        if self.end is not None:
+            self.end_sample = math.ceil(self.end * fmt.sample_rate)
+            last = min(last, self.end_sample - self.frames_read)
+        self.frames_read += count // fmt.block_align
+        if last <= first:
+            return None
+        data = data[first * fmt.block_align:last * fmt.block_align]
+        if fmt.bits == 24:
+            octets = np.frombuffer(data, dtype=np.uint8).reshape(-1, 3).astype(np.int32)
+            values = octets[:, 0] | octets[:, 1] << 8 | octets[:, 2] << 16
+            values = (values ^ (1 << 23)) - (1 << 23)
+        else:
+            values = np.frombuffer(data, dtype=f"<i{fmt.bits // 8}")
+        return values.astype(np.float64) / (2 ** (fmt.bits - 1))
 
 
 class AudioReader:
