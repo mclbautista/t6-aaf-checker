@@ -109,9 +109,9 @@ def test_clean_embedded_baseline_reads_every_stream_to_its_end(tmp_path):
     assert events[-1]["verdict"] == "PASS"
     assert not [event for event in events if event["type"] == "finding"]
     progress = [event for event in events if event["type"] == "progress"]
-    # Each baseline WAV: 528,528 mono 24-bit sample frames plus 44 header bytes.
-    assert progress[-1]["bytes_read"] == 4_756_884
-    for done, expected in ((1, 1_585_628), (2, 3_171_256), (3, 4_756_884)):
+    # Each baseline WAV: 528,528 mono 24-bit frames + 44 header + 610 bext bytes.
+    assert progress[-1]["bytes_read"] == 4_758_714
+    for done, expected in ((1, 1_586_238), (2, 3_172_476), (3, 4_758_714)):
         assert next(event for event in progress if event["clips_done"] == done)["bytes_read"] == expected
     assert progress[-1]["clips_done"] == progress[-1]["clips_total"] == 3
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
@@ -126,7 +126,7 @@ def test_large_embedded_stream_reports_bounded_chunks_during_the_clip(tmp_path):
     assert events[-1]["verdict"] == "PASS"
     progress = [event for event in events if event["type"] == "progress"]
     # 1,440 sequence frames at 2,002 samples/frame, three bytes/sample + header.
-    assert progress[-1]["bytes_read"] == 8_648_684
+    assert progress[-1]["bytes_read"] == 8_649_294
     increments = [later["bytes_read"] - earlier["bytes_read"]
                   for earlier, later in zip(progress, progress[1:])]
     # Progress accounts for each bounded read, including reads before clip EOF.
@@ -147,7 +147,7 @@ def test_progress_counts_only_actual_essence_bytes_and_keeps_rising_after_failur
     counts = [event["bytes_read"] for event in progress]
     assert counts[0] == 0
     assert counts == sorted(counts)
-    assert counts[-1] == 3_171_253
+    assert counts[-1] == 3_172_473
     assert all(event["aaf_path"] == str(path) for event in progress)
     assert [event["clips_done"] for event in progress] == sorted(
         event["clips_done"] for event in progress

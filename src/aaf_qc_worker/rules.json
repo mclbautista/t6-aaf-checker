@@ -3,6 +3,12 @@
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
+  "no_broadcast_wav_chunk": {
+    "name": "No broadcast-WAV chunk",
+    "severity": "INFO",
+    "message": "Embedded WAV has no bext chunk.",
+    "fix_instruction": null
+  },
   "fat_count_mismatch": {
     "name": "FAT count mismatch",
     "severity": "INFO",

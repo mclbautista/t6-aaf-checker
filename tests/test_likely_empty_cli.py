@@ -22,7 +22,7 @@ def test_container_failure_still_checks_every_clip(tmp_path):
     ]
     progress = [event for event in events if event["type"] == "progress"]
     assert progress[-1]["clips_done"] == progress[-1]["clips_total"] == 3
-    assert progress[-1]["bytes_read"] == 1_585_625
+    assert progress[-1]["bytes_read"] == 1_586_235
 
 
 def test_container_lists_exactly_clips_with_any_sector_at_or_above_boundary(tmp_path):
@@ -48,7 +48,7 @@ def test_container_lists_exactly_clips_with_any_sector_at_or_above_boundary(tmp_
     ]
     progress = [event for event in events if event["type"] == "progress"]
     assert progress[-1]["clips_done"] == progress[-1]["clips_total"] == 3
-    assert progress[-1]["bytes_read"] == 4_756_884
+    assert progress[-1]["bytes_read"] == 4_758_714
     assert path.stat().st_size == before.st_size
     assert path.stat().st_mtime_ns == before.st_mtime_ns
     assert path.stat().st_blocks * 512 < 32 * 1024**2
@@ -90,4 +90,4 @@ def test_valid_large_container_has_no_likely_empty_list_even_with_high_audio(tmp
     assert all("likely_empty_clips" not in event for event in events)
     progress = [event for event in events if event["type"] == "progress"]
     assert progress[-1]["clips_done"] == progress[-1]["clips_total"] == 3
-    assert progress[-1]["bytes_read"] == 4_756_884
+    assert progress[-1]["bytes_read"] == 4_758_714

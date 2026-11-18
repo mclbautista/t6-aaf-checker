@@ -123,6 +123,8 @@ def check_aaf(path, config):
                                     reader.audio_bytes,
                                     reader.format.block_align * reader.format.sample_rate,
                                 )
+                            if b"bext" not in reader.chunk_ids:
+                                rule_id = "no_broadcast_wav_chunk"
                     except (AAFError, OSError, ValueError, EOFError, IndexError, KeyError, AssertionError):
                         # A readable AAF with damaged essence is a clip FAIL.
                         rule_id = "embedded_audio_unreadable"
