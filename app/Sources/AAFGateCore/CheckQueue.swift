@@ -73,7 +73,7 @@ public final class CheckQueue: ObservableObject {
     private func receive(_ event: WorkerEvent) {
         if case .finding(let finding) = event { receivedFindings.append(finding) }
         if case .terminal = event { receivedTerminal = true }
-        if case .progress(let done, let total, let bytes) = event {
+        if case .progress(let done, let total, let bytes, _) = event {
             current?.progress = CheckProgress(clipsDone: done, clipsTotal: total, bytesRead: bytes)
         }
     }

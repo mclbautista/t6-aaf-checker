@@ -44,6 +44,11 @@ final class GateModel: ObservableObject {
             .appendingPathComponent("Contents/Helpers/aaf-qc-worker/aaf-qc-worker")),
         logs: RunLogStore()
     )
+    let compare = CompareModel(
+        runner: WorkerRunner(executableURL: Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/aaf-qc-worker/aaf-qc-worker")),
+        logs: RunLogStore()
+    )
 
     func openFiles() {
         let panel = NSOpenPanel()
@@ -65,16 +70,7 @@ final class GateModel: ObservableObject {
         let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
         guard !files.isEmpty else { return false }
         Task {
-            var urls: [URL] = []
-            for provider in files {
-                let data: Data? = await withCheckedContinuation { continuation in
-                    provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
-                        continuation.resume(returning: data)
-                    }
-                }
-                if let data, let url = URL(dataRepresentation: data, relativeTo: nil) { urls.append(url) }
-            }
-            enqueue(urls)
+            enqueue(await droppedFileURLs(files))
         }
         return true
     }
@@ -85,6 +81,34 @@ final class GateModel: ObservableObject {
 }
 
 struct GateView: View {
+    let model: GateModel
+
+    var body: some View {
+        TabView {
+            CheckView(model: model)
+                .tabItem { Label("Check", systemImage: "checkmark.circle") }
+            CompareView(model: model.compare)
+                .tabItem { Label("Compare", systemImage: "arrow.left.arrow.right") }
+        }
+        .padding(.top, 8)
+    }
+}
+
+@MainActor
+func droppedFileURLs(_ providers: [NSItemProvider]) async -> [URL] {
+    var urls: [URL] = []
+    for provider in providers {
+        let data: Data? = await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                continuation.resume(returning: data)
+            }
+        }
+        if let data, let url = URL(dataRepresentation: data, relativeTo: nil) { urls.append(url) }
+    }
+    return urls
+}
+
+struct CheckView: View {
     let model: GateModel
     @ObservedObject var queue: CheckQueue
 

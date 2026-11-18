@@ -241,3 +241,89 @@ severity-set filtering, 1,601 findings, likely-empty counts (including 271),
 retained queued results, exact report file URLs and unsaved-report messages for
 all verdicts. Finder selection and actual Table scrolling require the manual
 checks above; a core performance test does not measure UI scrolling.
+
+## Compare acceptance
+
+The **Compare** tab is separate from **Check**. Each well accepts one AAF by
+drop or Choose. Compare is enabled only for two different local AAF paths;
+the role selections are locked while it runs. Dock and File > Open inputs
+continue to queue checks, even while the Compare tab is selected.
+
+Generate these small pairs using the existing synthetic builder:
+
+```sh
+export AAF_GATE_COMPARE_DIR="$(mktemp -d /tmp/aaf-gate-compare.XXXXXX)"
+.venv/bin/python - <<'PY'
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, "tests")
+from synthetic_aaf import Clip, Timeline
+
+folder = Path(os.environ["AAF_GATE_COMPARE_DIR"])
+timeline = Timeline(tuple(
+    Clip(f"Clip {i}", f"clip_{i}.wav", i + 2, duration=2, head=2, tail=2)
+    for i in range(1, 4)
+))
+timeline.export(folder / "flagged.aaf")
+timeline.export(folder / "identical.aaf", mode="linked")
+timeline.with_clip(2, record_start=1).with_clip(3, record_start=1).export(
+    folder / "inserted-frame.aaf", mode="linked",
+)
+Timeline(timeline.clips[:2]).export(folder / "dropped.aaf", mode="linked")
+Timeline(tuple(
+    Clip(f"Other {i}", f"other_{i}.wav", i + 2, duration=2, head=2, tail=2)
+    for i in range(1, 4)
+)).export(folder / "unrelated.aaf", mode="linked")
+timeline.with_clip(1, sample_points=((5000, -2**14),)).export(
+    folder / "changed-audio.aaf", mode="linked",
+)
+moved = timeline
+for number in range(1, 4):
+    moved = moved.with_clip(number, record_start=10)
+moved.export(folder / "whole-reel.aaf", mode="linked")
+print(folder)
+PY
+open "build/AAF Gate.app"
+open "$AAF_GATE_COMPARE_DIR"
+```
+
+1. Select Compare. With both wells empty, then only Flagged AAF filled,
+   Compare stays disabled. Selecting the same file in both wells also leaves
+   it disabled. Choose `flagged.aaf` for Flagged AAF and `identical.aaf` for
+   Corrected AAF. Repeat using drops into the respective wells.
+2. Run Compare. Expect PASS, Flagged AAF: PASS, Corrected AAF: PASS,
+   **Regressions (0)**, and resolved / persisting / new counts of 0 / 3 / 0.
+   Expand Persisting findings to inspect both sides. The corrected findings
+   table contains the three short-handle warnings and supports the same
+   filters and row details as Check.
+3. Click Reveal reports. Finder must select the PDF and JSON whose names
+   include `identical_AAFGate_Compare_PASS`, beside `identical.aaf`. Each
+   rerun must reveal its own report pair.
+4. Keep the flagged well and choose `inserted-frame.aaf` for corrected. Expect
+   FAIL, two **Clip moved by 1 frame.** entries, both record positions and
+   **Delta (frames): 1**. A reel-length change also blocks. There are no dropped
+   or added clips. Regressions precede changes that do not block and the summary.
+5. Choose `dropped.aaf` for corrected. Expect FAIL and **Dropped**, Clip 3,
+   its flagged position, an absent corrected position, and its short-handle
+   warning directly beneath the dropped clip. That warning is not resolved.
+6. Choose `unrelated.aaf`. Expect ERROR with the reason that fewer than half
+   the clips pair. Both individual AAF verdicts remain PASS for reference.
+7. Choose `changed-audio.aaf`. Expect PASS with zero regressions and one
+   **Audio content changed** note under **Changes that do not block**.
+8. Choose `whole-reel.aaf`. Expect FAIL with **Whole reel moved by 10 frames.**
+   first. Its disclosure shows the paired positions; individual sync shifts
+   still appear as regressions beneath it.
+9. Start a compare on a larger synthetic pair. Progress names the AAF being
+   read, displays clips and bytes, and both wells remain locked. Cancel stops
+   the worker and shows Cancelled without report links. A subsequent compare
+   starts with fresh findings and diff items. Drop two AAFs on the Dock icon:
+   the Check tab must show two queued checks and the Compare wells stay unchanged.
+
+Swift Testing covers diff-item payloads (including dropped-clip findings,
+classification, whole-reel positions, exact subframes and audio notes), compare
+terminal fields, explicit subprocess argument roles, selection guards,
+corrected-only findings, report URLs, live progress, cancellation/retry and logs.
+The worker CLI suite covers synthetic pairing, regressions and compare report
+contents. Native well drops, window layout and Finder selection require the
+manual checks above.
