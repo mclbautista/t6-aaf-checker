@@ -20,6 +20,9 @@ handles and timing. ``media_mode`` overrides the export mode for one clip;
 Amplitudes are signed integer PCM values in the selected bit
 depth. One clip occupies each sound slot; supply a different ``clips`` tuple for
 a different timeline. Durations, positions and handles are sequence frames.
+MasterMob and file SourceMob slots default to the media sample rate, with
+lengths in samples. Timeline SourceClip starts and lengths remain in sequence
+frames. ``sample_rate_slots=False`` keeps the older all-sequence-rate chain.
 
 Embedded essence contains complete RIFF/WAVE streams keyed by the file SourceMob
 ID. Its unnamed file mob has a WAVEDescriptor without locators and references an
@@ -87,6 +90,7 @@ class Clip:
     descriptor_kind: str = "wave"
     wav_subtype: str | None = None
     wav_container: str = "WAV"
+    sample_rate_slots: bool = True
 
 
 @dataclass(frozen=True)
@@ -304,17 +308,20 @@ def embedded_essence_by_name(aaf):
 
 def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_path):
     frames = clip.head + clip.duration + clip.tail
+    media_rate = clip.sample_rate if clip.sample_rate_slots else EDIT_RATE
+    media_length = samples if clip.sample_rate_slots else frames
+    physical_start = 9_000_000
     tape = aaf.create.SourceMob(clip.tape)
     aaf.content.mobs.append(tape)
     tape.descriptor = aaf.create.TapeDescriptor()
-    tape_slot = tape.create_empty_slot(EDIT_RATE, media_kind="sound", slot_id=1)
-    tape_slot.segment.length = frames
+    tape_slot = tape.create_empty_slot(media_rate, media_kind="sound", slot_id=1)
+    tape_slot.segment.length = physical_start + media_length
     # Mob(name="") substitutes a default name; allow an explicitly blank tape.
     tape.name = clip.tape
 
     source = aaf.create.SourceMob(clip.media_name)
     aaf.content.mobs.append(source)
-    source_slot = source.create_timeline_slot(EDIT_RATE, slot_id=1)
+    source_slot = source.create_timeline_slot(media_rate, slot_id=1)
     locator = aaf.create.NetworkLocator()
     locator["URLString"].value = locator_url
     if embedded:
@@ -323,11 +330,13 @@ def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_pa
         aaf.content.mobs.append(imported)
         imported.descriptor = aaf.create.ImportDescriptor()
         imported.descriptor["Locator"].append(locator)
-        imported_slot = imported.create_timeline_slot(EDIT_RATE, slot_id=1)
-        imported_slot.segment = tape.create_source_clip(1, length=frames)
-        source_slot.segment = imported.create_source_clip(1, length=frames)
+        imported_slot = imported.create_timeline_slot(media_rate, slot_id=1)
+        imported_slot.segment = tape.create_source_clip(1, length=physical_start + media_length)
+        source_slot.segment = imported.create_source_clip(
+            1, start=physical_start, length=media_length,
+        )
     else:
-        source_slot.segment = tape.create_source_clip(1, length=frames)
+        source_slot.segment = tape.create_source_clip(1, start=physical_start, length=media_length)
     if clip.descriptor_kind == "wave":
         source.descriptor = aaf.create.WAVEDescriptor()
         source.descriptor["SampleRate"].value = clip.sample_rate
@@ -371,7 +380,7 @@ def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_pa
     aaf.content.mobs.append(master)
     master.comments["Scene"] = clip.scene
     master.comments["Take"] = clip.take
-    master_slot = master.create_timeline_slot(EDIT_RATE, slot_id=1)
+    master_slot = master.create_timeline_slot(media_rate, slot_id=1)
     target = source
     for index in range(clip.chain_depth):
         intermediate = aaf.create.SourceMob(f"Intermediate {index}")
@@ -380,11 +389,11 @@ def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_pa
         stale = aaf.create.NetworkLocator()
         stale["URLString"].value = "file:///nonexistent-synthetic-storage/stale.wav"
         intermediate.descriptor["Locator"].append(stale)
-        slot = intermediate.create_timeline_slot(EDIT_RATE, slot_id=1)
-        slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=frames))
+        slot = intermediate.create_timeline_slot(media_rate, slot_id=1)
+        slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=media_length))
         target = intermediate
     # Premiere Pro wraps each MasterMob slot's SourceClip in a one-item Sequence.
-    master_slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=frames))
+    master_slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=media_length))
     return master, source
 
 
