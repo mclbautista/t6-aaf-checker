@@ -1,5 +1,9 @@
 # AAF Gate worker
 
+The native SwiftUI shell is in `app/`. Build the signed Apple Silicon app with
+`./scripts/build_app.sh`; see [build and verification instructions](docs/build.md)
+for Command Line Tools requirements, Swift tests and the synthetic drop checklist.
+
 Python 3.12 worker for AAF Gate. Install and run from the repository root:
 
 ```sh
