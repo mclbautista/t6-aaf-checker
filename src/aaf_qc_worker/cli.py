@@ -13,6 +13,7 @@ from aaf2.exceptions import AAFError
 
 from .audio import AudioReader
 from .container import corruption_message, stream_reaches_offset
+from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
 from .timeline import sound_clips
 
 
@@ -61,15 +62,19 @@ def check_aaf(path, config):
                 bytes_read=bytes_read,
             )
             for done, clip in enumerate(clips, 1):
+                first_finding = len(findings)
                 rule_id = None
+                media_format = None
                 if clip.embedded:
+                    reader = None
                     try:
                         with closing(essence[clip.essence_id].open("r")) as stream:
                             if message and stream_reaches_offset(
                                 stream, config["container_corrupt"]["likely_empty_offset_bytes"]
                             ):
                                 likely_empty_clips.append(clip_location(clip))
-                            for block in AudioReader(stream, config["audio_reader"]["chunk_bytes"]):
+                            reader = AudioReader(stream, config["audio_reader"]["chunk_bytes"])
+                            for block in reader:
                                 bytes_read += len(block.data)
                                 emit(
                                     "progress", aaf_path=str(path), clips_done=done - 1,
@@ -78,6 +83,8 @@ def check_aaf(path, config):
                     except (AAFError, OSError, ValueError, EOFError, IndexError, KeyError, AssertionError):
                         # A readable AAF with damaged essence is a clip FAIL.
                         rule_id = "embedded_audio_unreadable"
+                    if reader is not None and reader.format is not None:
+                        media_format = wave_properties(reader.format)
                 elif clip.linked_path is None:
                     rule_id = "offline_clip"
                 elif clip.outside_delivery:
@@ -93,6 +100,32 @@ def check_aaf(path, config):
                         message=rule["message"],
                         fix_instruction=rule["fix_instruction"],
                     ))
+                rule = config["format_mismatch"]
+                format_errors = []
+                descriptor_format = None
+                try:
+                    if clip.descriptor:
+                        descriptor_format = descriptor_properties(clip.descriptor)
+                except ValueError as error:
+                    format_errors.append(f"AAF descriptor format cannot be read: {error}")
+                if not clip.embedded and clip.linked_path:
+                    try:
+                        media_format = linked_properties(clip.linked_path)
+                    except ValueError as error:
+                        format_errors.append(str(error))
+                format_message = " ".join(filter(None, [
+                    *format_errors, mismatch_message(descriptor_format, media_format, rule),
+                ]))
+                if format_message:
+                    findings.append(dict(
+                        aaf_path=str(path), rule_id="format_mismatch",
+                        rule_name=rule["name"], severity=rule["severity"],
+                        **clip_location(clip), message=format_message,
+                        fix_instruction=rule["fix_instruction"],
+                    ))
+                findings[first_finding:] = sorted(
+                    findings[first_finding:], key=lambda finding: finding["rule_id"]
+                )
                 emit(
                     "progress", aaf_path=str(path), clips_done=done,
                     clips_total=len(clips), bytes_read=bytes_read,

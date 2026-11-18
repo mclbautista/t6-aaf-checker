@@ -2,6 +2,13 @@
   "rule_version": "1.0.0",
   "linked_media": {"levels_above": 2},
   "audio_reader": {"chunk_bytes": 1048576},
+  "format_mismatch": {
+    "name": "Format mismatch",
+    "severity": "FAIL",
+    "expected": {"sample_rate": 48000, "bits": 24, "channels": 1, "encoding": "PCM", "container": "WAV"},
+    "property_names": {"sample_rate": "sample rate (Hz)", "bits": "bit depth", "channels": "channels", "encoding": "encoding", "container": "container"},
+    "fix_instruction": "Re-export audio in the expected format with matching AAF descriptors."
+  },
   "embedded_audio_unreadable": {
     "name": "Embedded audio unreadable",
     "severity": "FAIL",
