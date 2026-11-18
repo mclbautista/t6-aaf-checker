@@ -109,6 +109,97 @@ def test_findings_use_track_slot_order_instead_of_mob_storage_order(tmp_path):
     assert second == first
 
 
+@pytest.mark.parametrize("wrappers", [
+    ("gain", "pan", None), ("pan", None, "gain"), (None, "gain", "pan"),
+])
+def test_gain_and_pan_wrapped_slots_report_offline_positions_on_any_track(tmp_path, wrappers):
+    timeline = Timeline().with_clip(1, record_start=24).with_clip(
+        2, record_start=48
+    ).with_clip(3, record_start=72)
+    path = timeline.export(tmp_path / "wrapped.aaf", mode="linked")
+    with edit_export(path) as aaf:
+        composition = next(aaf.content.compositionmobs())
+        composition.slot_at(1).segment.start = 86400
+        for slot_id, wrapper in zip((3, 4, 5), wrappers):
+            if wrapper:
+                slot = composition.slot_at(slot_id)
+                group = operation_group(aaf, length=96, operation=wrapper)
+                group.segments.append(slot.segment.copy())
+                slot.segment = group
+
+    assert check(path)[-1]["verdict"] == "PASS"
+    expected = []
+    for number, wrapper in enumerate(wrappers, 1):
+        if wrapper:
+            (tmp_path / "wrapped_media" / f"clip_{number}.wav").unlink()
+            expected.append((
+                {"slot_id": number + 2, "name": f"Audio {number}"},
+                {1: "01:00:01:00", 2: "01:00:02:00", 3: "01:00:03:00"}[number],
+            ))
+
+    events = check(path)
+
+    assert events[-1]["verdict"] == "FAIL"
+    assert [(item["track"], item["record_in_timecode"]) for item in findings(events)] == expected
+    assert all(item["rule_id"] == "offline_clip" for item in findings(events))
+    assert [event for event in events if event["type"] == "progress"][-1]["clips_total"] == 3
+
+
+def test_repeated_physical_track_numbers_keep_slot_id_and_name(tmp_path):
+    path = Timeline().with_clip(1, record_start=48).export(
+        tmp_path / "tracks.aaf", mode="linked"
+    )
+    with edit_export(path) as aaf:
+        composition = next(aaf.content.compositionmobs())
+        for slot_id, name in ((3, "Dialogue"), (4, "Effects")):
+            slot = composition.slot_at(slot_id)
+            slot["PhysicalTrackNumber"].value = 1
+            slot.name = name
+    for number in (1, 2):
+        (tmp_path / "tracks_media" / f"clip_{number}.wav").unlink()
+
+    events = check(path)
+
+    assert events[-1]["verdict"] == "FAIL"
+    assert [(item["track"], item["record_in_timecode"], item["clip_name"])
+            for item in findings(events)] == [
+        ({"slot_id": 3, "name": "Dialogue"}, "00:00:02:00", "Clip 1"),
+        ({"slot_id": 4, "name": "Effects"}, "00:00:00:00", "Clip 2"),
+    ]
+    assert all(item["rule_id"] == "offline_clip" for item in findings(events))
+
+
+def test_deleting_shared_linked_file_reports_each_clip_occurrence(tmp_path):
+    path = Timeline().with_clip(2, record_start=48).export(
+        tmp_path / "shared.aaf", mode="linked"
+    )
+    with edit_export(path) as aaf:
+        composition = next(aaf.content.compositionmobs())
+        first_master = composition.slot_at(3).segment.components[0].mob
+        second_master = composition.slot_at(4).segment.components[1].mob
+        # Distinct timeline clips and MasterMobs resolve to the same file SourceMob.
+        second_master.slot_at(1).segment.components[0].mob = (
+            first_master.slot_at(1).segment.components[0].mob
+        )
+
+    online = check(path)
+    assert online[-1]["verdict"] == "PASS"
+    assert findings(online) == []
+    (tmp_path / "shared_media" / "clip_1.wav").unlink()
+
+    offline = check(path)
+
+    assert offline[-1]["verdict"] == "FAIL"
+    assert [(item["track"], item["record_in_timecode"], item["clip_name"], item["source_file"])
+            for item in findings(offline)] == [
+        ({"slot_id": 3, "name": "Audio 1"}, "00:00:00:00", "Clip 1", "clip_1.wav"),
+        ({"slot_id": 4, "name": "Audio 2"}, "00:00:02:00", "Clip 2", "clip_1.wav"),
+    ]
+    assert all(item["rule_id"] == "offline_clip" for item in findings(offline))
+    progress = [event for event in offline if event["type"] == "progress"]
+    assert (progress[-1]["clips_done"], progress[-1]["clips_total"]) == (3, 3)
+
+
 @pytest.mark.parametrize("wrapper", [None, "gain", "pan"])
 def test_timeline_counts_occurrences_and_subtracts_transition_overlaps(tmp_path, wrapper):
     path = Timeline().export(tmp_path / "overlap.aaf", mode="linked")
@@ -125,8 +216,17 @@ def test_timeline_counts_occurrences_and_subtracts_transition_overlaps(tmp_path,
         )
         sequence.components.append(transition)
         sequence.components.append(master.create_source_clip(1, start=144, length=12))
+        second_transition = aaf.create.Transition(media_kind="sound", length=2)
+        second_transition.cutpoint = 1
+        second_transition["OperationGroup"].value = operation_group(
+            aaf, length=2, operation="dissolve"
+        )
+        sequence.components.append(second_transition)
+        sequence.components.append(master.create_source_clip(1, start=156, length=8))
+        # The next clip starts at the previous clip's exclusive out point.
+        sequence.components.append(master.create_source_clip(1, start=164, length=6))
         if wrapper:
-            group = operation_group(aaf, length=32, operation=wrapper)
+            group = operation_group(aaf, length=44, operation=wrapper)
             group.segments.append(sequence.copy())
             slot.segment = group
 
@@ -136,16 +236,19 @@ def test_timeline_counts_occurrences_and_subtracts_transition_overlaps(tmp_path,
     assert [(item["track"]["slot_id"], item["record_in_timecode"], item["clip_name"])
             for item in findings(events)] == [
         (3, "00:00:00:00", "Clip 1"), (3, "00:00:00:20", "Clip 1"),
+        (3, "00:00:01:06", "Clip 1"), (3, "00:00:01:14", "Clip 1"),
     ]
     progress = [event for event in events if event["type"] == "progress"]
     assert [(item["clips_done"], item["clips_total"]) for item in progress] == [
-        (0, 4), (1, 4), (2, 4), (3, 4), (4, 4),
+        (0, 6), (1, 6), (2, 6), (3, 6), (4, 6), (5, 6), (6, 6),
     ]
 
 
 @pytest.mark.parametrize(
     "edit_rate,fps,drop,start,record_start,label",
     [
+        ("25", 25, False, 90000, 1526, "01:01:01:01"),
+        ("30000/1001", 30, True, 0, 1799, "00:00:59;29"),
         ("30000/1001", 30, True, 0, 1800, "00:01:00;02"),
         ("30000/1001", 30, True, 0, 17982, "00:10:00;00"),
         ("30000/1001", 30, True, 107892, 0, "01:00:00;00"),
