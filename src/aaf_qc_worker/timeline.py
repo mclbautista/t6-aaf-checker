@@ -30,6 +30,10 @@ class TimelineClip:
     scan_start: Fraction
     scan_end: Fraction
     metadata_sources: dict
+    locator_names: tuple[str, ...]
+    structural_order: int
+    track_type: str
+    media_mob_id: MobID
 
 
 def locator_path(url):
@@ -60,6 +64,7 @@ def linked_file(path, locators, levels_above):
 def clip_media(component, containing_rate, essence_ids, path, config):
     """Resolve file media and its in-point; use upstream locators to name essence."""
     seen = set()
+    locator_names = []
     file_mob = None
     embedded_id = None
     embedded_name = None
@@ -78,6 +83,11 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         if mob is None:
             break
         descriptor = getattr(mob, "descriptor", None)
+        if descriptor:
+            for locator in descriptor["Locator"].value:
+                name = locator_path(locator["URLString"].value).name
+                if name and name not in locator_names:
+                    locator_names.append(name)
         if isinstance(mob, MasterMob):
             metadata_sources["master_mob_comment"].update(
                 (key.casefold(), value) for key, value in mob.comments.items()
@@ -116,9 +126,11 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         reference = _first_source_clip(target_slot.segment)
     if embedded_id is not None:
         return (True, None, embedded_locator_name or embedded_name, False,
-                embedded_id, media_descriptor, media_start, metadata_sources)
+                embedded_id, media_descriptor, media_start, metadata_sources,
+                tuple(locator_names), embedded_id)
     if file_mob is None:
-        return False, None, None, False, None, None, media_start, metadata_sources
+        return (False, None, None, False, None, None, media_start, metadata_sources,
+                tuple(locator_names), component.mob_id)
     locators = [item["URLString"].value for item in file_mob.descriptor["Locator"].value]
     linked_path, outside_delivery = linked_file(
         path, locators, config["linked_media"]["levels_above"]
@@ -131,6 +143,8 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         file_mob.descriptor,
         media_start,
         metadata_sources,
+        tuple(locator_names),
+        file_mob.mob_id,
     )
 
 
@@ -186,11 +200,12 @@ def sound_clips(aaf, path, config):
         for slot in composition.slots:
             if slot.media_kind != "Sound":
                 continue
-            for position, component in timeline_occurrences(slot.segment):
+            for order, (position, component) in enumerate(timeline_occurrences(slot.segment)):
                 master = component.mob
                 (
                     embedded, linked_path, source_file, outside_delivery,
                     essence_id, descriptor, used_start, metadata_sources,
+                    locator_names, media_mob_id,
                 ) = clip_media(component, slot.edit_rate, essence_ids, path, config)
                 record_start = Fraction(position, 1) / slot.edit_rate
                 timecode_rate = timecode_slot.edit_rate if timecode_slot else slot.edit_rate
@@ -207,6 +222,7 @@ def sound_clips(aaf, path, config):
                     embedded, linked_path, outside_delivery, essence_id, descriptor,
                     Fraction(slot.edit_rate), used_start, used_end,
                     scan_start, scan_end,
-                    metadata_sources,
+                    metadata_sources, locator_names, order,
+                    component.media_kind, media_mob_id,
                 ))
     return sorted(clips, key=lambda clip: (clip.slot_id, clip.record_start))

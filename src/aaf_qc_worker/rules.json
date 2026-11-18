@@ -1,5 +1,6 @@
 {
   "rule_version": "1.0.0",
+  "compare": {"minimum_paired_fraction": "1/2"},
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
