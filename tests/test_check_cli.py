@@ -164,7 +164,9 @@ def test_repeated_checks_have_identical_events(make_aaf, verdict):
 
 
 @pytest.mark.parametrize("major_version", [3, 4])
-def test_invalid_sector_shift_is_a_container_failure(make_aaf, major_version):
+def test_invalid_sector_shift_keeps_container_finding_but_open_failure_is_error(
+    make_aaf, major_version,
+):
     path = make_aaf(major_version=major_version)
     with path.open("r+b") as stream:
         stream.seek(30)
@@ -172,7 +174,8 @@ def test_invalid_sector_shift_is_a_container_failure(make_aaf, major_version):
 
     events = check(path)
 
-    assert events[-1]["verdict"] == "FAIL"
+    assert events[-1]["verdict"] == "ERROR"
+    assert events[-1]["reason"].strip()
     findings = [event for event in events if event["type"] == "finding"]
     assert len(findings) == 1
     assert findings[0]["rule_id"] == "container_corrupt"

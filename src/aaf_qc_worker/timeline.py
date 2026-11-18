@@ -50,9 +50,11 @@ def linked_file(path, locators, levels_above):
 
 
 def clip_media(component, essence_ids, path, config):
-    """Follow references until the file mob; physical tape mobs are not files."""
+    """Resolve media at the file mob, using upstream locators to name essence."""
     seen = set()
     file_mob = None
+    embedded_id = None
+    embedded_name = None
     reference = component
     while isinstance(reference, SourceClip):
         identity = (reference.mob_id, reference.slot_id)
@@ -65,17 +67,27 @@ def clip_media(component, essence_ids, path, config):
         try:
             target_slot = reference.slot
         except IndexError:
-            break
-        if target_slot is None:
+            target_slot = None
+        # Reaching essence requires a valid reference. Once found, an upstream
+        # mob can still supply a locator even when it has no further slots.
+        if embedded_id is None and target_slot is None:
             break
         descriptor = getattr(mob, "descriptor", None)
-        if mob.mob_id in essence_ids:
+        if embedded_id is None and mob.mob_id in essence_ids:
+            embedded_id = mob.mob_id
+        if embedded_id is not None:
+            embedded_name = embedded_name or mob.name
             locators = descriptor["Locator"].value if descriptor else []
-            name = locator_path(locators[0]["URLString"].value).name if locators else mob.name
-            return True, None, name, False, mob.mob_id
-        if isinstance(descriptor, FileDescriptor):
+            if locators:
+                name = locator_path(locators[0]["URLString"].value).name
+                return True, None, name, False, embedded_id
+        if target_slot is None:
+            break
+        if embedded_id is None and isinstance(descriptor, FileDescriptor):
             file_mob = mob
         reference = _first_source_clip(target_slot.segment)
+    if embedded_id is not None:
+        return True, None, embedded_name, False, embedded_id
     if file_mob is None:
         return False, None, None, False, None
     locators = [item["URLString"].value for item in file_mob.descriptor["Locator"].value]

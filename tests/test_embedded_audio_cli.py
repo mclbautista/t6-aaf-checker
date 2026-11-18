@@ -5,16 +5,68 @@ import shutil
 
 import pytest
 
-from synthetic_aaf import Timeline, edit_export
+from synthetic_aaf import Timeline, edit_export, embedded_essence_by_name
 from test_check_cli import check
 
 
 def truncate_essence(path, source_name, remove_bytes):
     with edit_export(path) as aaf:
-        source = next(mob for mob in aaf.content.sourcemobs() if mob.name == source_name)
-        essence = next(item for item in aaf.content.essencedata if item.mob_id == source.mob_id)
+        essence = embedded_essence_by_name(aaf)[source_name]
         stream = essence.open("rw")
         stream.truncate(stream.dir.byte_size - remove_bytes)
+
+
+@pytest.mark.parametrize("chain_depth", [0, 2])
+def test_embedded_finding_uses_upstream_import_locator_for_source_file(tmp_path, chain_depth):
+    path = Timeline().with_clip(
+        2, media_name="original audio.wav", truncate_bytes=3, chain_depth=chain_depth,
+    ).export(tmp_path / "imported.aaf")
+
+    events = check(path)
+
+    findings = [event for event in events if event["type"] == "finding"]
+    assert events[-1]["verdict"] == "FAIL"
+    assert [finding["rule_id"] for finding in findings] == ["embedded_audio_unreadable"]
+    assert findings[0]["source_file"] == "original audio.wav"
+    assert findings[0]["clip_name"] == "Clip 2"
+
+
+@pytest.mark.parametrize("import_has_name", [True, False])
+def test_embedded_source_file_falls_back_to_upstream_names_without_locators(
+    tmp_path, import_has_name,
+):
+    path = Timeline().with_clip(2, truncate_bytes=3, chain_depth=2).export(
+        tmp_path / "no_locator.aaf"
+    )
+    with edit_export(path) as aaf:
+        essence = embedded_essence_by_name(aaf)["clip_2.wav"]
+        imported = essence.mob.slot_at(1).segment.mob
+        del imported.descriptor["Locator"]
+        if not import_has_name:
+            del imported["Name"]
+
+    events = check(path)
+
+    findings = [event for event in events if event["type"] == "finding"]
+    assert events[-1]["verdict"] == "FAIL"
+    assert [finding["rule_id"] for finding in findings] == ["embedded_audio_unreadable"]
+    assert findings[0]["source_file"] == (
+        "ImportClip 2" if import_has_name else "Synthetic tape"
+    )
+
+
+def test_embedded_source_file_uses_terminal_import_mob_without_slots(tmp_path):
+    path = Timeline().with_clip(2, truncate_bytes=3).export(tmp_path / "terminal_import.aaf")
+    with edit_export(path) as aaf:
+        imported = embedded_essence_by_name(aaf)["clip_2.wav"].mob.slot_at(1).segment.mob
+        imported["Slots"].value = []
+
+    events = check(path)
+
+    findings = [event for event in events if event["type"] == "finding"]
+    assert events[-1]["verdict"] == "FAIL"
+    assert [finding["rule_id"] for finding in findings] == ["embedded_audio_unreadable"]
+    assert findings[0]["source_file"] == "clip_2.wav"
 
 
 def test_patched_truncated_essence_fails_with_clip_and_export_fix(tmp_path):
