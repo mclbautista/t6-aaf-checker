@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from synthetic_aaf import Clip, Timeline
-from test_check_cli import WORKER, check
+from test_check_cli import WORKER, check, without_report_paths
 
 
 # Keep comparison exports small while preserving exact rational media offsets.
@@ -263,7 +263,7 @@ def test_repeated_compares_are_identical_in_corrected_position_order(tmp_path):
     first = compare(flagged, corrected)
     second = compare(flagged, corrected)
 
-    assert first == second
+    assert without_report_paths(first) == without_report_paths(second)
     items = diff_items(first)
     assert [item["kind"] for item in items] == [
         "added", "audio_content_changed", "new", "persisting", "persisting", "dropped",
@@ -449,7 +449,7 @@ def test_early_filler_reports_later_sync_shifts_without_drops_or_adds(tmp_path):
         "record_in_timecode": "00:00:00:05", "record_in_frames": 5,
         "source_in_frames": 2, "length_frames": 2,
     }
-    assert compare(flagged, corrected) == events
+    assert without_report_paths(compare(flagged, corrected)) == without_report_paths(events)
 
 
 def test_whole_reel_offset_is_summarised_once_before_clip_diffs(tmp_path):
@@ -620,7 +620,7 @@ def test_simultaneous_changes_follow_corrected_track_record_and_rule_order(tmp_p
         ("sync_shift", None), ("track_change", None),
     ]
     assert events[-1]["blocking_regressions"] == 3
-    assert compare(flagged, corrected) == events
+    assert without_report_paths(compare(flagged, corrected)) == without_report_paths(events)
 
 
 def test_whole_reel_summary_carries_positions_of_every_paired_clip(tmp_path):

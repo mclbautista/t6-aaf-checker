@@ -10,7 +10,7 @@ import signal
 
 from .check import check_aaf
 from .compare import compare_checks
-from .report import write_check_reports
+from .report import write_check_reports, write_compare_reports
 
 
 def emit(event_type, **fields):
@@ -22,13 +22,13 @@ def terminate(signum, frame):
     raise SystemExit(128 + signum)
 
 
-def run_compare(flagged, corrected, config):
+def run_compare(flagged, corrected, config, report_emit):
     checks = []
     verdicts = {}
     errors = []
     for role, path in (("flagged", flagged), ("corrected", corrected)):
         def role_emit(event_type, **fields):
-            emit(event_type, aaf_role=role, **fields)
+            report_emit(event_type, aaf_role=role, **fields)
         try:
             result = check_aaf(path, config, role_emit)
         except Exception as error:
@@ -39,7 +39,7 @@ def run_compare(flagged, corrected, config):
             checks.append(result)
     if errors:
         return dict(verdicts, verdict="ERROR", reason="; ".join(errors))
-    return compare_checks(*checks, config=config, emit=emit)
+    return compare_checks(*checks, config=config, emit=report_emit)
 
 
 def main():
@@ -55,6 +55,17 @@ def main():
     signal.signal(signal.SIGTERM, terminate)
     run_datetime = datetime.now().astimezone()
     findings = []
+    compare_findings = {"flagged": [], "corrected": []}
+    diff_items = []
+
+    def compare_emit(event_type, **fields):
+        if event_type == "finding":
+            compare_findings[fields["aaf_role"]].append(
+                {key: value for key, value in fields.items() if key != "aaf_role"},
+            )
+        elif event_type == "diff_item":
+            diff_items.append(fields)
+        emit(event_type, **fields)
 
     def check_emit(event_type, **fields):
         if event_type == "finding":
@@ -73,7 +84,7 @@ def main():
         if args.command == "check":
             fields = {"verdict": check_aaf(args.aaf, config, check_emit).verdict}
         else:
-            fields = run_compare(args.flagged, args.corrected, config)
+            fields = run_compare(args.flagged, args.corrected, config, compare_emit)
     except Exception as error:
         # The process boundary turns reader and I/O failures into a single event.
         fields = dict(
@@ -82,15 +93,21 @@ def main():
         )
 
     report_paths = []
-    if args.command == "check":
-        try:
+    try:
+        if args.command == "check":
             report_paths = write_check_reports(
                 args.aaf, fields["verdict"], findings,
                 app_version=version("aaf-gate-worker"), rule_version=config["rule_version"],
                 reason=fields.get("reason"),
                 run_datetime=run_datetime,
             )
-        except Exception as error:
-            fields["report_error"] = f"Report not saved: {str(error) or type(error).__name__}"
+        else:
+            report_paths = write_compare_reports(
+                args.flagged, args.corrected, fields, compare_findings, diff_items,
+                app_version=version("aaf-gate-worker"), rule_version=config["rule_version"],
+                run_datetime=run_datetime,
+            )
+    except Exception as error:
+        fields["report_error"] = f"Report not saved: {str(error) or type(error).__name__}"
     emit("terminal", **fields, report_paths=report_paths)
     return {"PASS": 0, "FAIL": 1, "ERROR": 2}[fields["verdict"]]
