@@ -24,7 +24,10 @@ Embedded essence contains complete RIFF/WAVE streams keyed by the file SourceMob
 ID. Its unnamed file mob has a WAVEDescriptor without locators and references an
 import mob carrying the original media locator, then the tape mob. Linked WAVs
 live in a unique ``<AAF stem>_media`` folder beside each export, with a locator on
-the file mob. All locators point into an absent export folder. Tape is a physical
+the file mob. Both modes default to WAVEDescriptor with a WAV Summary;
+``descriptor_kind="pcm"`` selects PCMDescriptor fields instead. ``wav_subtype``
+and ``wav_container`` select libsndfile-generated format variants. All locators
+point into an absent export folder. Tape is a physical
 SourceMob name; scene and take are MasterMob comments.
 
 ``patch_header`` changes CFB version/sector-shift bytes, optionally on a copy.
@@ -51,6 +54,8 @@ import wave
 from urllib.parse import unquote, urlsplit
 
 import aaf2
+import numpy as np
+import soundfile
 
 
 EDIT_RATE = "24000/1001"
@@ -77,6 +82,9 @@ class Clip:
     media_mode: str | None = None
     chain_depth: int = 0
     odd_unpadded: bool = False
+    descriptor_kind: str = "wave"
+    wav_subtype: str | None = None
+    wav_container: str = "WAV"
 
 
 @dataclass(frozen=True)
@@ -243,11 +251,20 @@ def _write_wav(path: Path, clip: Clip) -> int:
     width = clip.bits // 8
     sample = clip.sample_value.to_bytes(width, "little", signed=True)
     block = sample * clip.channels * CHUNK_FRAMES
-    with wave.open(str(path), "wb") as wav:
-        wav.setparams((clip.channels, width, clip.sample_rate, 0, "NONE", "not compressed"))
-        for start in range(0, samples, CHUNK_FRAMES):
-            count = min(CHUNK_FRAMES, samples - start)
-            wav.writeframesraw(block[:count * clip.channels * width])
+    if clip.wav_subtype or clip.wav_container != "WAV":
+        with soundfile.SoundFile(
+            str(path), "w", samplerate=clip.sample_rate, channels=clip.channels,
+            format=clip.wav_container, subtype=clip.wav_subtype or f"PCM_{clip.bits}",
+        ) as wav:
+            values = np.full((CHUNK_FRAMES, clip.channels), 0.25, dtype=np.float32)
+            for start in range(0, samples, CHUNK_FRAMES):
+                wav.write(values[:min(CHUNK_FRAMES, samples - start)])
+    else:
+        with wave.open(str(path), "wb") as wav:
+            wav.setparams((clip.channels, width, clip.sample_rate, 0, "NONE", "not compressed"))
+            for start in range(0, samples, CHUNK_FRAMES):
+                count = min(CHUNK_FRAMES, samples - start)
+                wav.writeframesraw(block[:count * clip.channels * width])
     if clip.odd_unpadded:
         # Premiere Pro writes no RIFF pad byte after odd-sized data and its
         # RIFF length excludes the pad.
@@ -300,14 +317,30 @@ def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_pa
         imported_slot = imported.create_timeline_slot(EDIT_RATE, slot_id=1)
         imported_slot.segment = tape.create_source_clip(1, length=frames)
         source_slot.segment = imported.create_source_clip(1, length=frames)
+    else:
+        source_slot.segment = tape.create_source_clip(1, length=frames)
+    if clip.descriptor_kind == "wave":
         source.descriptor = aaf.create.WAVEDescriptor()
         source.descriptor["SampleRate"].value = clip.sample_rate
         source.descriptor["Length"].value = samples
-        # wave writes the RIFF header and PCM fmt chunk in the first 36 bytes.
+        # Summary ends after fmt, even if the writer adds extension fields or
+        # other chunks before it. It intentionally contains no sample data.
         with wav_path.open("rb") as wav:
-            source.descriptor["Summary"].value = bytearray(wav.read(36))
-    else:
-        source_slot.segment = tape.create_source_clip(1, length=frames)
+            summary = bytearray(wav.read(12))
+            while header := wav.read(8):
+                chunk_id, size = struct.unpack("<4sI", header)
+                summary.extend(header)
+                remaining = size + size % 2
+                while remaining:
+                    block = wav.read(min(remaining, CHUNK_FRAMES))
+                    if not block:
+                        raise ValueError("Synthetic WAV header is incomplete.")
+                    summary.extend(block)
+                    remaining -= len(block)
+                if chunk_id == b"fmt ":
+                    break
+            source.descriptor["Summary"].value = summary
+    elif clip.descriptor_kind == "pcm":
         descriptor = aaf.create.PCMDescriptor()
         source.descriptor = descriptor
         for field, value in {
@@ -320,7 +353,10 @@ def _audio_chain(aaf, clip: Clip, samples: int, *, embedded, locator_url, wav_pa
             "Length": samples,
         }.items():
             descriptor[field].value = value
-        descriptor["Locator"].append(locator)
+    else:
+        raise ValueError("descriptor_kind must be 'wave' or 'pcm'")
+    if not embedded:
+        source.descriptor["Locator"].append(locator)
 
     master = aaf.create.MasterMob(clip.name)
     aaf.content.mobs.append(master)

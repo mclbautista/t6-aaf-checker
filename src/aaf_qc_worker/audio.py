@@ -23,6 +23,20 @@ class WaveFormat:
     block_align: int
     bits: int
 
+    @classmethod
+    def from_chunk(cls, prefix):
+        if len(prefix) < 16:
+            raise AudioUnreadable("Incomplete WAV format chunk.")
+        fields = list(struct.unpack_from("<HHIIHH", prefix))
+        if fields[0] == 0xFFFE:
+            if len(prefix) < 40 or struct.unpack_from("<H", prefix, 16)[0] < 22:
+                raise AudioUnreadable("Incomplete extensible WAV format chunk.")
+            # WAVEFORMATEXTENSIBLE's subformat GUID identifies PCM or float.
+            if prefix[28:40] == bytes.fromhex("00001000800000aa00389b71"):
+                fields[0] = struct.unpack_from("<I", prefix, 24)[0]
+            fields[5] = struct.unpack_from("<H", prefix, 18)[0] or fields[5]
+        return cls(*fields)
+
 
 @dataclass(frozen=True)
 class AudioBlock:
@@ -74,11 +88,9 @@ class AudioReader:
             if padded_size > remaining:
                 raise AudioUnreadable("WAV chunk extends beyond its RIFF length.")
             self.chunk_ids.add(chunk_id)
-            prefix = yield from self._part(size, chunk_id, capture=16 if chunk_id == b"fmt " else 0)
+            prefix = yield from self._part(size, chunk_id, capture=40 if chunk_id == b"fmt " else 0)
             if chunk_id == b"fmt ":
-                if len(prefix) < 16:
-                    raise AudioUnreadable("Incomplete WAV format chunk.")
-                self.format = WaveFormat(*struct.unpack("<HHIIHH", prefix))
+                self.format = WaveFormat.from_chunk(prefix)
             elif chunk_id == b"data":
                 self.audio_bytes += size
             if padded_size > size:
