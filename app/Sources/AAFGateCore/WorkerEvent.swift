@@ -3,7 +3,7 @@ import Foundation
 public enum WorkerEvent: Equatable, Sendable {
     case runStarted(mode: String, workerVersion: String, ruleVersion: String)
     case progress(clipsDone: Int, clipsTotal: Int, bytesRead: Int64)
-    case finding(ruleID: String, severity: String, message: String)
+    case finding(WorkerFinding)
     case diffItem(kind: String, blocking: Bool)
     case terminal(TerminalEvent)
 }
@@ -40,8 +40,7 @@ public struct WorkerEventDecoder: Sendable {
             let value = try decoder.decode(Progress.self, from: data)
             return .progress(clipsDone: value.clipsDone, clipsTotal: value.clipsTotal, bytesRead: value.bytesRead)
         case "finding":
-            let value = try decoder.decode(Finding.self, from: data)
-            return .finding(ruleID: value.ruleId, severity: value.severity, message: value.message)
+            return .finding(try decoder.decode(WorkerFinding.self, from: data))
         case "diff_item":
             let value = try decoder.decode(Diff.self, from: data)
             return .diffItem(kind: value.kind, blocking: value.blocking)
@@ -79,12 +78,6 @@ private struct Progress: Decodable {
     let clipsDone: Int
     let clipsTotal: Int
     let bytesRead: Int64
-}
-
-private struct Finding: Decodable {
-    let ruleId: String
-    let severity: String
-    let message: String
 }
 
 private struct Diff: Decodable {

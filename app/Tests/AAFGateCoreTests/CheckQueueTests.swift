@@ -152,3 +152,61 @@ func cancelStopsWorkerAndContinuesQueue(ignoresTerm: Bool) async throws {
     #expect(queue.completed.first?.status == .cancelled)
     #expect(!FileManager.default.fileExists(atPath: fixture.folder.appendingPathComponent("unexpected-launch").path))
 }
+
+@Test @MainActor func completedRunsRetainFindingsAndFilteringDoesNotRerunWorker() async throws {
+    let line = #"{"schema_version":1,"type":"finding","rule_id":"digital_silence","rule_name":"Digital silence","severity":"FAIL","track":{"slot_id":3,"name":"Audio 1"},"record_in_timecode":"01:00:00:00","clip_name":"Clip 1","source_file":"clip_1.wav","message":"Every sample is zero.","fix_instruction":"Re-export."}"#
+    let fixture = try RunFixture(script: """
+    printf 'launch\\n' >> "$(dirname "$0")/launches"
+    case "$2" in
+      *first.aaf)
+        printf '%s\\n' '\(line)'
+        printf '%s\\n' '{"schema_version":1,"type":"terminal","verdict":"FAIL","report_paths":[]}'
+        exit 1 ;;
+    esac
+    printf '%s\\n' '{"schema_version":1,"type":"terminal","verdict":"PASS","report_paths":[]}'
+    """)
+    defer { fixture.remove() }
+    let queue = CheckQueue(runner: WorkerRunner(executableURL: fixture.worker))
+    queue.enqueue([fixture.folder.appendingPathComponent("first.aaf"), fixture.folder.appendingPathComponent("second.aaf")])
+    try await eventually { !queue.isRunning }
+    #expect(queue.completed.map(\.findings.count) == [1, 0])
+    #expect(queue.current?.findings.isEmpty == true)
+    let first = try #require(queue.completed.first)
+    let model = FindingsModel(findings: first.findings)
+    model.severities = [.warn]
+    #expect(model.groups.isEmpty)
+    model.severities = [.fail]
+    #expect(model.groups.first?.rows.first?.finding.clipName == "Clip 1")
+    #expect(first.status == .finished(.fail))
+    #expect(try String(contentsOf: fixture.folder.appendingPathComponent("launches"), encoding: .utf8) == "launch\nlaunch\n")
+}
+
+@Test(arguments: ["PASS", "FAIL", "ERROR"]) @MainActor
+func unsavedReportsPreserveVerdictAndWorkerReason(verdict: String) async throws {
+    let status = ["PASS": 0, "FAIL": 1, "ERROR": 2][verdict]!
+    let fixture = try RunFixture(script: """
+    printf '%s\\n' '{"schema_version":1,"type":"terminal","verdict":"\(verdict)","report_paths":[],"reason":"Worker result reason","report_error":"Report not saved: Permission denied"}'
+    exit \(status)
+    """)
+    defer { fixture.remove() }
+    let queue = CheckQueue(runner: WorkerRunner(executableURL: fixture.worker))
+    queue.enqueue([fixture.folder.appendingPathComponent("readonly.aaf")])
+    try await eventually { !queue.isRunning }
+    let result = try #require(queue.completed.first)
+    #expect(result.status == .finished(Verdict(rawValue: verdict)!))
+    #expect(result.reportURLs.isEmpty)
+    #expect(result.reportSaveMessage == "Report could not be saved. Report not saved: Permission denied")
+    #expect(result.detail == "Worker result reason")
+}
+
+@Test @MainActor func reportRevealKeepsBothExactFileURLs() async throws {
+    let fixture = try RunFixture(script: #"printf '%s\n' '{"schema_version":1,"type":"terminal","verdict":"PASS","report_paths":["/tmp/Synthetic reports/clip #1.pdf","/tmp/Synthetic reports/clip #1.json"]}'"#)
+    defer { fixture.remove() }
+    let queue = CheckQueue(runner: WorkerRunner(executableURL: fixture.worker))
+    queue.enqueue([fixture.folder.appendingPathComponent("synthetic.aaf")])
+    try await eventually { !queue.isRunning }
+    let result = try #require(queue.completed.first)
+    #expect(result.reportURLs.map(\.path) == ["/tmp/Synthetic reports/clip #1.pdf", "/tmp/Synthetic reports/clip #1.json"])
+    #expect(result.reportURLs.allSatisfy { $0.isFileURL })
+    #expect(result.reportSaveMessage == nil)
+}

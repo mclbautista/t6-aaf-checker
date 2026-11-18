@@ -14,7 +14,16 @@ import AAFGateCore
 
 @Test func decodesFinding() throws {
     let event = try WorkerEventDecoder().decode(line: #"{"schema_version":1,"type":"finding","aaf_path":"/tmp/synthetic.aaf","rule_id":"digital_silence","severity":"FAIL","track":null,"message":"Every sample is zero."}"#)
-    #expect(event == .finding(ruleID: "digital_silence", severity: "FAIL", message: "Every sample is zero."))
+    guard case .finding(let finding) = event else {
+        Issue.record("Expected finding")
+        return
+    }
+    #expect(finding.ruleID == "digital_silence")
+    #expect(finding.ruleName == "digital_silence")
+    #expect(finding.severity == .fail)
+    #expect(finding.message == "Every sample is zero.")
+    #expect(finding.likelyEmptyClips.isEmpty)
+    #expect(finding.fixInstruction == nil)
 }
 
 @Test func decodesDiffItem() throws {

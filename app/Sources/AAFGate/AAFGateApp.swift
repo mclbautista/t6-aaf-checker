@@ -13,7 +13,7 @@ struct AAFGateApp: App {
             GateView(model: model)
                 .onOpenURL { model.enqueue([$0]) }
         }
-        .defaultSize(width: 600, height: 420)
+        .defaultSize(width: 1400, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { model.openFiles() }
@@ -79,8 +79,8 @@ final class GateModel: ObservableObject {
         return true
     }
 
-    func revealReports() {
-        NSWorkspace.shared.activateFileViewerSelecting((queue.current?.reportPaths ?? []).map { URL(fileURLWithPath: $0) })
+    func revealReports(for run: CheckRun) {
+        NSWorkspace.shared.activateFileViewerSelecting(run.reportURLs)
     }
 }
 
@@ -93,6 +93,11 @@ struct GateView: View {
         self.queue = model.queue
     }
     @State private var isTargeted = false
+    @State private var selectedRunID: CheckRun.ID?
+
+    private var displayedRun: CheckRun? {
+        queue.completed.first { $0.id == selectedRunID } ?? queue.current
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -103,7 +108,7 @@ struct GateView: View {
                 Button("Open AAF…") { model.openFiles() }
             }
             VStack(alignment: .leading, spacing: 10) {
-                if let run = queue.current, run.status != .running {
+                if let run = displayedRun, run.status != .running {
                     Text(label(for: run.status))
                         .font(.system(size: 42, weight: .bold, design: .rounded))
                         .foregroundStyle(color(for: run.status))
@@ -119,9 +124,9 @@ struct GateView: View {
                 } else {
                     Image(systemName: "square.and.arrow.down").font(.largeTitle)
                 }
-                Text(queue.current?.aaf.lastPathComponent ?? "Drop an AAF to check")
+                Text(displayedRun?.aaf.lastPathComponent ?? "Drop an AAF to check")
                     .font(.headline).textSelection(.enabled)
-                if let run = queue.current, !run.detail.isEmpty {
+                if let run = displayedRun, !run.detail.isEmpty {
                     Text(run.detail).textSelection(.enabled)
                 }
                 if queue.isRunning, let progress = queue.current?.progress {
@@ -132,12 +137,21 @@ struct GateView: View {
                 }
                 Text("Drop AAF files here").foregroundStyle(.secondary)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 130, alignment: .leading)
             .background(isTargeted ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            if !(queue.current?.reportPaths.isEmpty ?? true) {
-                Button("Reveal reports in Finder") { model.revealReports() }
+            if let run = displayedRun, run.status != .running {
+                if let message = run.reportSaveMessage {
+                    Text(message).foregroundStyle(.orange).textSelection(.enabled)
+                        .accessibilityIdentifier("report-save-error")
+                } else if !run.reportURLs.isEmpty {
+                    Button("Reveal reports") { model.revealReports(for: run) }
+                        .accessibilityIdentifier("reveal-reports")
+                }
+                if case .finished = run.status {
+                    FindingsView(findings: run.findings).id(run.id)
+                }
             }
             if !queue.pending.isEmpty {
                 Text("Queued: \(queue.pending.map(\.lastPathComponent).joined(separator: ", "))")
@@ -145,18 +159,25 @@ struct GateView: View {
             }
             if let error = queue.logRetentionError { Text(error).foregroundStyle(.secondary) }
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(queue.completed) { result in
-                        HStack {
-                            Text(label(for: result.status)).bold().foregroundStyle(color(for: result.status))
-                            Text(result.aaf.lastPathComponent)
+                        Button {
+                            selectedRunID = result.id
+                        } label: {
+                            HStack {
+                                Text(label(for: result.status)).bold().foregroundStyle(color(for: result.status))
+                                Text(result.aaf.lastPathComponent)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .help("Show this run's findings and reports")
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
-            }
+            }.frame(maxHeight: 60)
         }
         .padding(24)
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 1100, minHeight: 620)
+        .onChange(of: queue.current?.id) { selectedRunID = nil }
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { model.acceptDrop($0) }
     }
 

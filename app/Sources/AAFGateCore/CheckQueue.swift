@@ -20,6 +20,13 @@ public struct CheckRun: Identifiable, Sendable {
     public var progress: CheckProgress?
     public var detail = ""
     public var reportPaths: [String] = []
+    public var findings: [WorkerFinding] = []
+    public var reportError: String?
+    public var reportURLs: [URL] { reportPaths.map { URL(fileURLWithPath: $0) } }
+    public var reportSaveMessage: String? {
+        guard reportPaths.isEmpty, let reportError else { return nil }
+        return "Report could not be saved. \(reportError)"
+    }
 }
 
 /// App-facing run state. Verdicts come only from completed worker runs.
@@ -34,6 +41,7 @@ public final class CheckQueue: ObservableObject {
     @Published private var receivedTerminal = false
     public var canCancel: Bool { isRunning && !isCancelling && !receivedTerminal }
     private var activeTask: Task<TerminalEvent, Error>?
+    private var receivedFindings: [WorkerFinding] = []
     private let runner: WorkerRunner
     private let logs: RunLogStore?
 
@@ -63,6 +71,7 @@ public final class CheckQueue: ObservableObject {
     }
 
     private func receive(_ event: WorkerEvent) {
+        if case .finding(let finding) = event { receivedFindings.append(finding) }
         if case .terminal = event { receivedTerminal = true }
         if case .progress(let done, let total, let bytes) = event {
             current?.progress = CheckProgress(clipsDone: done, clipsTotal: total, bytesRead: bytes)
@@ -73,6 +82,7 @@ public final class CheckQueue: ObservableObject {
         while !pending.isEmpty {
             let aaf = pending.removeFirst()
             current = CheckRun(aaf: aaf)
+            receivedFindings = []
             receivedTerminal = false
             var log: WorkerLog?
             var logError: String?
@@ -90,8 +100,10 @@ public final class CheckQueue: ObservableObject {
                 let terminal = try await task.value
                 if isCancelling { throw CancellationError() }
                 current?.status = .finished(terminal.verdict)
-                current?.detail = [terminal.reason, terminal.reportError].compactMap { $0 }.joined(separator: "\n")
+                current?.detail = terminal.reason ?? ""
+                current?.reportError = terminal.reportError
                 current?.reportPaths = terminal.reportPaths
+                current?.findings = receivedFindings
             } catch is CancellationError {
                 current?.status = .cancelled
                 current?.reportPaths = []

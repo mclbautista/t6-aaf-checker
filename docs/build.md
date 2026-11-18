@@ -109,7 +109,9 @@ worker's terminal PASS, FAIL or ERROR and any report-save error. Unsupported
 event kinds are ignored; unsupported schema versions, malformed output and
 exits without a terminal event show ERROR. Reports can be revealed in Finder.
 The core library handles decoding and process I/O; the SwiftUI target contains
-no quality-control rules. Detailed findings and Compare UI are later tickets.
+no quality-control rules. Completed runs show a native findings Table with rule
+counts, severity filters and a selected-row detail pane. Compare UI is a later
+ticket.
 
 ## Verify the app
 
@@ -170,3 +172,72 @@ open "$AAF_GATE_SMOKE_DIR"
 4. Copy the whole bundle to an Apple Silicon Mac without Python installed and
    repeat. The restricted-PATH smoke test verifies independence from Python
    tooling on this build host; a second-machine check remains manual.
+
+## Findings and report acceptance
+
+From the repository root, generate synthetic inputs in a temporary folder:
+
+```sh
+export AAF_GATE_FINDINGS_DIR="$(mktemp -d /tmp/aaf-gate-findings.XXXXXX)"
+.venv/bin/python - <<'PY'
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, "tests")
+from synthetic_aaf import Timeline, edit_export, patch_header
+from sparse_aaf import place_essence_at_boundary
+
+folder = Path(os.environ["AAF_GATE_FINDINGS_DIR"])
+mixed = Timeline().with_clip(1, sample_value=0, tape="", scene="", take="", bext=False)
+mixed.export(folder / "mixed" / "mixed.aaf")
+mixed.export(folder / "readonly" / "readonly.aaf")
+large = mixed.export(folder / "large" / "large.aaf")
+with edit_export(large) as aaf:
+    composition = next(aaf.content.compositionmobs())
+    sequence = composition.slot_at(3).segment
+    original = sequence.components[0]
+    for _ in range(533):
+        sequence.components.append(original.copy())
+    composition.slot_at(1).segment.length = 24 * 534
+    composition.slot_at(2).segment.length = 24 * 534
+container = Timeline().export(folder / "container" / "container.aaf")
+place_essence_at_boundary(container)
+patch_header(container, major_version=4)
+(folder / "readonly").chmod(0o555)
+print(folder)
+PY
+```
+
+The container fixture is sparse: its apparent size exceeds 2 GiB, but its
+allocated space is small. Keep it on a filesystem that supports sparse files.
+
+1. Open `mixed/mixed.aaf` in the built app. Expect FAIL and three rule groups:
+   Digital silence (1), Missing field-recorder metadata (1), No broadcast-WAV
+   chunk (1), in that order. Select a row and check track, record TC, clip,
+   source, full message and fix instruction. File-level findings show “File
+   level” and dashes for absent location fields.
+2. Toggle FAIL, WARN and INFO independently, including all off and all on.
+   Counts stay correct, hidden rows return in their original order, and no
+   progress indicator or new reports appear. Click **Reveal reports**: Finder
+   must select both the PDF and JSON for this run.
+3. Open `readonly/readonly.aaf`. Expect the same FAIL and findings, plus
+   **Report could not be saved** with the worker's permission-denied reason,
+   and no Reveal reports button. No report appears beside the input. After
+   this check, restore permissions with `chmod 755 "$AAF_GATE_FINDINGS_DIR/readonly"`.
+4. Open `large/large.aaf`. Expect 1,602 findings, with 534 per rule. Scroll
+   rapidly to the end and back, select rows, resize the window and toggle
+   filters. The native Table should remain responsive. There are only three
+   audio streams; the fixture repeats the first timeline clip, rather than
+   duplicating its essence.
+5. Open `container/container.aaf`. Select Container corrupt. Its message
+   includes **2 clips likely to import empty**. Expand **Likely to import
+   empty (2)** in the detail pane and check Clip 2 and Clip 3, with their
+   track, timecode and source names.
+6. Select a previous run from the completed list. Its findings and Reveal
+   reports action must still refer to that run, without launching a check.
+
+Swift Testing covers presentation grouping, stable row order and identities,
+severity-set filtering, 1,601 findings, likely-empty counts (including 271),
+retained queued results, exact report file URLs and unsaved-report messages for
+all verdicts. Finder selection and actual Table scrolling require the manual
+checks above; a core performance test does not measure UI scrolling.
