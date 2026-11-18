@@ -11,6 +11,35 @@ def findings(events):
 
 
 @pytest.mark.parametrize("mode", ["embedded", "linked"])
+@pytest.mark.parametrize("pulse,value,expected_rule", [
+    (240239, 2**14, "digital_silence"),  # one sample before the head handle
+    (240240, 2**14, None),  # first included sample
+    (768767, 2**14, None),  # last included sample
+    (768768, 2**14, "digital_silence"),  # exclusive end of the tail handle
+    (480480, 149, "low_level"),  # quiet pulse at the used in-point
+])
+def test_sample_rate_mob_slots_scan_the_correct_samples(
+    tmp_path, mode, pulse, value, expected_rule,
+):
+    from synthetic_aaf import Clip
+
+    path = Timeline(clips=(Clip(
+        "Window clip", "window.wav", 3, head=240, tail=240,
+        sample_value=0, sample_points=((pulse, value),),
+    ),)).export(tmp_path / "sample_slots.aaf", mode=mode)
+
+    events = check(path)
+
+    # 240 sequence frames = 480,480 samples. With 120-frame handles,
+    # the exact scan is [240,240, 768,768) at 48 kHz.
+    levels = [item for item in findings(events)
+              if item["rule_id"] in ("digital_silence", "low_level")]
+    assert [item["rule_id"] for item in levels] == ([expected_rule] if expected_rule else [])
+    assert findings(events) == levels
+    assert events[-1]["verdict"] == ("FAIL" if expected_rule == "digital_silence" else "PASS")
+
+
+@pytest.mark.parametrize("mode", ["embedded", "linked"])
 def test_all_zero_clip_fails_digital_silence_only(tmp_path, mode):
     path = Timeline().with_clip(2, sample_value=0).export(
         tmp_path / "zero.aaf", mode=mode,
@@ -96,10 +125,9 @@ def test_master_to_file_offset_uses_each_slots_rate_and_ignores_physical_start(
         master = next(mob for mob in aaf.content.mastermobs() if mob.name == "Clip 2")
         reference = master.slot_at(1).segment.components[0]
         for _ in range(chain_depth):
-            reference.start = 15
+            reference.start = 15 * 2002
             reference = reference.slot.segment.components[0]
         # Total offset = 90 sequence frames; the last hop uses sample units.
-        reference.slot.edit_rate = 48000
         reference.start = (90 - 15 * chain_depth) * 2002
         # This is the upstream physical time, beyond the delivered file extent.
         reference.slot.segment.start = 9_000_000
@@ -190,7 +218,9 @@ def test_handles_are_clipped_to_media_extent(tmp_path, mode, head, tail, pulse):
 
     events = check(path)
 
-    assert findings(events) == []
+    assert [(item["rule_id"], item["severity"]) for item in findings(events)] == [
+        ("short_handles", "WARN"),
+    ]
     assert events[-1]["verdict"] == "PASS"
 
 
@@ -218,8 +248,6 @@ def test_fractional_sample_boundaries_use_exact_slot_rate(tmp_path, mode, pulse,
     with edit_export(path) as aaf:
         composition = next(aaf.content.compositionmobs())
         composition.slot_at(4).edit_rate = "30000/1001"
-        master = next(mob for mob in aaf.content.mastermobs() if mob.name == "Clip 2")
-        master.slot_at(1).edit_rate = "30000/1001"
     # 48 kHz at 30000/1001 gives 1601.6 samples/edit unit. The scan is
     # [1601.6, 424424), so sample 1601 is excluded and sample 1602 is included.
 

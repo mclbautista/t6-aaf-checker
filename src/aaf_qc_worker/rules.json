@@ -42,6 +42,12 @@
     "message": "Every sample in the used range plus handles is digital zero.",
     "fix_instruction": "Check the source audio in the edit and re-export with audible media."
   },
+  "short_handles": {
+    "name": "Short handles",
+    "severity": "WARN",
+    "message": "Short delivered handles ({handles}); need at least {threshold} sequence frames on each side.",
+    "fix_instruction": null
+  },
   "low_level": {
     "name": "Low level",
     "severity": "INFO",

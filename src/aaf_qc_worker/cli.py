@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import closing
+from fractions import Fraction
 from importlib.metadata import version
 from importlib.resources import files
 import json
@@ -15,6 +16,7 @@ from aaf2.exceptions import AAFError
 from .audio import AudioReader
 from .container import corruption_message, stream_reaches_offset
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
+from .handles import short_handles_message
 from .levels import EmbeddedPeak, linked_peak
 from .timeline import sound_clips
 
@@ -67,6 +69,7 @@ def check_aaf(path, config):
                 first_finding = len(findings)
                 rule_id = None
                 media_format = None
+                media_duration = None
                 peak = None
                 if clip.embedded:
                     reader = None
@@ -86,6 +89,14 @@ def check_aaf(path, config):
                                     clips_total=len(clips), bytes_read=bytes_read,
                                 )
                             peak = scan.peak
+                            if (
+                                reader.format and reader.format.encoding in (1, 3)
+                                and reader.format.block_align > 0 and reader.format.sample_rate > 0
+                            ):
+                                media_duration = Fraction(
+                                    reader.audio_bytes,
+                                    reader.format.block_align * reader.format.sample_rate,
+                                )
                     except (AAFError, OSError, ValueError, EOFError, IndexError, KeyError, AssertionError):
                         # A readable AAF with damaged essence is a clip FAIL.
                         rule_id = "embedded_audio_unreadable"
@@ -117,6 +128,9 @@ def check_aaf(path, config):
                 if not clip.embedded and clip.linked_path:
                     try:
                         media_format = linked_properties(clip.linked_path)
+                        media_duration = Fraction(
+                            media_format["frames"], media_format["sample_rate"],
+                        )
                     except ValueError as error:
                         format_errors.append(str(error))
                 format_message = " ".join(filter(None, [
@@ -148,6 +162,15 @@ def check_aaf(path, config):
                             peak_dbfs=20 * math.log10(peak) if peak else None,
                             floor_dbfs=config["low_level"]["floor_dbfs"],
                         ),
+                        fix_instruction=rule["fix_instruction"],
+                    ))
+                handle_message = short_handles_message(clip, media_duration, config)
+                if handle_message:
+                    rule = config["short_handles"]
+                    findings.append(dict(
+                        aaf_path=str(path), rule_id="short_handles",
+                        rule_name=rule["name"], severity=rule["severity"],
+                        **clip_location(clip), message=handle_message,
                         fix_instruction=rule["fix_instruction"],
                     ))
                 findings[first_finding:] = sorted(

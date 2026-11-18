@@ -45,6 +45,7 @@ def linked_properties(path):
     bits = {"PCM_U8": 8, "PCM_16": 16, "PCM_24": 24, "PCM_32": 32,
             "FLOAT": 32, "DOUBLE": 64}.get(info.subtype)
     return {"sample_rate": info.samplerate, "bits": bits, "channels": info.channels,
+            "frames": info.frames,
             "encoding": "PCM" if info.subtype.startswith("PCM_") else info.subtype,
             "container": "WAV" if info.format in ("WAV", "WAVEX") else info.format}
 

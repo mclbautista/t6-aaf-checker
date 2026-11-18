@@ -27,3 +27,4 @@ aaf_qc_worker = ["rules.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+tmp_path_retention_policy = "none"

@@ -23,6 +23,9 @@ class TimelineClip:
     outside_delivery: bool
     essence_id: MobID | None
     descriptor: FileDescriptor | None
+    edit_rate: Fraction
+    used_start: Fraction
+    used_end: Fraction
     scan_start: Fraction
     scan_end: Fraction
 
@@ -52,7 +55,7 @@ def linked_file(path, locators, levels_above):
     return None, False
 
 
-def clip_media(component, essence_ids, path, config):
+def clip_media(component, containing_rate, essence_ids, path, config):
     """Resolve file media and its in-point; use upstream locators to name essence."""
     seen = set()
     file_mob = None
@@ -78,10 +81,10 @@ def clip_media(component, essence_ids, path, config):
         # mob can still supply a locator even when it has no further slots.
         if embedded_id is None and target_slot is None:
             break
-        # StartTime belongs to the referenced slot's edit rate. Stop adding
+        # StartTime belongs to the slot containing this SourceClip. Stop adding
         # offsets at the delivered file; later hops describe physical sources.
         if not reached_file and target_slot is not None:
-            media_start += Fraction(reference.start, 1) / target_slot.edit_rate
+            media_start += Fraction(reference.start, 1) / containing_rate
         descriptor = getattr(mob, "descriptor", None)
         if mob.mob_id in essence_ids or isinstance(descriptor, FileDescriptor):
             reached_file = True
@@ -98,6 +101,7 @@ def clip_media(component, essence_ids, path, config):
             break
         if embedded_id is None and isinstance(descriptor, FileDescriptor):
             file_mob = mob
+        containing_rate = target_slot.edit_rate
         reference = _first_source_clip(target_slot.segment)
     if embedded_id is not None:
         return True, None, embedded_name, False, embedded_id, media_descriptor, media_start
@@ -174,19 +178,21 @@ def sound_clips(aaf, path, config):
                 (
                     embedded, linked_path, source_file, outside_delivery,
                     essence_id, descriptor, used_start,
-                ) = clip_media(component, essence_ids, path, config)
+                ) = clip_media(component, slot.edit_rate, essence_ids, path, config)
                 record_start = Fraction(position, 1) / slot.edit_rate
                 timecode_rate = timecode_slot.edit_rate if timecode_slot else slot.edit_rate
                 fps = timecode_slot.segment.fps if timecode_slot else round(slot.edit_rate)
                 frames = (timecode_start + record_start * timecode_rate) // 1
                 handles = Fraction(config["handle_frames"], 1) / slot.edit_rate
+                used_end = used_start + Fraction(component.length, 1) / slot.edit_rate
                 scan_start = used_start - handles
-                scan_end = used_start + Fraction(component.length, 1) / slot.edit_rate + handles
+                scan_end = used_end + handles
                 clips.append(TimelineClip(
                     slot.slot_id, slot.name, record_start,
                     timecode_label(frames, fps, drop),
                     master.name if master else None, source_file,
                     embedded, linked_path, outside_delivery, essence_id, descriptor,
+                    Fraction(slot.edit_rate), used_start, used_end,
                     scan_start, scan_end,
                 ))
     return sorted(clips, key=lambda clip: (clip.slot_id, clip.record_start))
