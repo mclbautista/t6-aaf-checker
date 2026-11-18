@@ -49,10 +49,12 @@ def startup_code(tmp_path, monkeypatch, code):
     monkeypatch.setenv("PYTHONPATH", str(startup) + os.pathsep + os.environ.get("PYTHONPATH", ""))
 
 
-def stop_at_io_then_signal(path, termination):
+def stop_at_io_then_signal(path, termination, *, flagged=None):
     """Wait for the OS-boundary fixture to suspend the CLI during a write."""
+    command = (["check", str(path)] if flagged is None else
+               ["compare", "--flagged", str(flagged), "--corrected", str(path)])
     process = subprocess.Popen(
-        [sys.executable, str(WORKER), "check", str(path)],
+        [sys.executable, str(WORKER), *command],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:

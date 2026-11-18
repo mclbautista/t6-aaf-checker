@@ -3,6 +3,7 @@
 import pytest
 
 from synthetic_aaf import Clip, Timeline
+from test_check_cli import without_report_paths
 from test_compare_cli import compare, diff_items
 
 
@@ -120,4 +121,4 @@ def test_only_changed_used_samples_are_info_across_media_modes(
     assert events[-1]["paired_clips"] == 3
     assert events[-1]["blocking_regressions"] == 0
     assert events[-1]["verdict"] == "PASS"
-    assert compare(flagged, corrected) == events
+    assert without_report_paths(compare(flagged, corrected)) == without_report_paths(events)

@@ -231,8 +231,12 @@ def classify_findings(before_findings, after_findings, emit):
 
 
 def emit_unpaired(kind, role, result, index, emit):
+    position = clip_position(result.clips[index])
     emit("diff_item", kind=kind, blocking=True, aaf_role=role,
          aaf_path=result.path, **clip_location(result.clips[index]),
+         flagged_position=position if role == "flagged" else None,
+         corrected_position=position if role == "corrected" else None,
+         delta_frames=None,
          findings=result.clip_findings[index])
 
 
