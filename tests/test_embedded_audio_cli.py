@@ -65,8 +65,12 @@ def test_embedded_source_file_uses_terminal_import_mob_without_slots(tmp_path):
 
     findings = [event for event in events if event["type"] == "finding"]
     assert events[-1]["verdict"] == "FAIL"
-    assert [finding["rule_id"] for finding in findings] == ["embedded_audio_unreadable"]
+    assert [finding["rule_id"] for finding in findings] == [
+        "embedded_audio_unreadable", "missing_field_recorder_metadata",
+    ]
     assert findings[0]["source_file"] == "clip_2.wav"
+    assert findings[1]["severity"] == "WARN"
+    assert findings[1]["message"] == "Missing field-recorder metadata: tape."
 
 
 def test_patched_truncated_essence_fails_with_clip_and_export_fix(tmp_path):

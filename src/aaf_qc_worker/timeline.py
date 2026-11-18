@@ -6,8 +6,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from aaf2.components import OperationGroup, Sequence, SourceClip, Transition
-from aaf2.essence import FileDescriptor
+from aaf2.essence import FileDescriptor, TapeDescriptor
 from aaf2.mobid import MobID
+from aaf2.mobs import MasterMob
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class TimelineClip:
     used_end: Fraction
     scan_start: Fraction
     scan_end: Fraction
+    metadata_sources: dict
 
 
 def locator_path(url):
@@ -61,6 +63,8 @@ def clip_media(component, containing_rate, essence_ids, path, config):
     file_mob = None
     embedded_id = None
     embedded_name = None
+    embedded_locator_name = None
+    metadata_sources = {"master_mob_comment": {}, "tape_source_mob": {}}
     media_descriptor = None
     reference = component
     media_start = Fraction(0)
@@ -73,6 +77,13 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         mob = reference.mob
         if mob is None:
             break
+        descriptor = getattr(mob, "descriptor", None)
+        if isinstance(mob, MasterMob):
+            metadata_sources["master_mob_comment"].update(
+                (key.casefold(), value) for key, value in mob.comments.items()
+            )
+        if isinstance(descriptor, TapeDescriptor):
+            metadata_sources["tape_source_mob"]["Name"] = mob.name
         try:
             target_slot = reference.slot
         except IndexError:
@@ -85,7 +96,6 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         # offsets at the delivered file; later hops describe physical sources.
         if not reached_file and target_slot is not None:
             media_start += Fraction(reference.start, 1) / containing_rate
-        descriptor = getattr(mob, "descriptor", None)
         if mob.mob_id in essence_ids or isinstance(descriptor, FileDescriptor):
             reached_file = True
         if embedded_id is None and mob.mob_id in essence_ids:
@@ -95,8 +105,9 @@ def clip_media(component, containing_rate, essence_ids, path, config):
             embedded_name = embedded_name or mob.name
             locators = descriptor["Locator"].value if descriptor else []
             if locators:
-                name = locator_path(locators[0]["URLString"].value).name
-                return True, None, name, False, embedded_id, media_descriptor, media_start
+                embedded_locator_name = embedded_locator_name or locator_path(
+                    locators[0]["URLString"].value
+                ).name
         if target_slot is None:
             break
         if embedded_id is None and isinstance(descriptor, FileDescriptor):
@@ -104,9 +115,10 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         containing_rate = target_slot.edit_rate
         reference = _first_source_clip(target_slot.segment)
     if embedded_id is not None:
-        return True, None, embedded_name, False, embedded_id, media_descriptor, media_start
+        return (True, None, embedded_locator_name or embedded_name, False,
+                embedded_id, media_descriptor, media_start, metadata_sources)
     if file_mob is None:
-        return False, None, None, False, None, None, media_start
+        return False, None, None, False, None, None, media_start, metadata_sources
     locators = [item["URLString"].value for item in file_mob.descriptor["Locator"].value]
     linked_path, outside_delivery = linked_file(
         path, locators, config["linked_media"]["levels_above"]
@@ -118,6 +130,7 @@ def clip_media(component, containing_rate, essence_ids, path, config):
         None,
         file_mob.descriptor,
         media_start,
+        metadata_sources,
     )
 
 
@@ -177,7 +190,7 @@ def sound_clips(aaf, path, config):
                 master = component.mob
                 (
                     embedded, linked_path, source_file, outside_delivery,
-                    essence_id, descriptor, used_start,
+                    essence_id, descriptor, used_start, metadata_sources,
                 ) = clip_media(component, slot.edit_rate, essence_ids, path, config)
                 record_start = Fraction(position, 1) / slot.edit_rate
                 timecode_rate = timecode_slot.edit_rate if timecode_slot else slot.edit_rate
@@ -194,5 +207,6 @@ def sound_clips(aaf, path, config):
                     embedded, linked_path, outside_delivery, essence_id, descriptor,
                     Fraction(slot.edit_rate), used_start, used_end,
                     scan_start, scan_end,
+                    metadata_sources,
                 ))
     return sorted(clips, key=lambda clip: (clip.slot_id, clip.record_start))

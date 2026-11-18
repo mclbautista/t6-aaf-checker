@@ -317,7 +317,12 @@ def test_unresolved_sound_references_are_offline_clips(tmp_path, break_chain):
 
     assert events[-1]["verdict"] == "FAIL"
     assert [(item["rule_id"], item["clip_name"], item["track"]["slot_id"])
-            for item in findings(events)] == [("offline_clip", "Clip 2", 4)]
+            for item in findings(events)] == [
+        ("missing_field_recorder_metadata", "Clip 2", 4),
+        ("offline_clip", "Clip 2", 4),
+    ]
+    assert findings(events)[0]["severity"] == "WARN"
+    assert findings(events)[0]["message"] == "Missing field-recorder metadata: tape."
 
 
 def test_relative_aaf_argument_searches_the_same_delivery_folders(tmp_path):

@@ -3,6 +3,17 @@
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
+  "missing_field_recorder_metadata": {
+    "name": "Missing field-recorder metadata",
+    "severity": "WARN",
+    "message": "Missing field-recorder metadata: {fields}.",
+    "fix_instruction": null,
+    "field_map": {
+      "tape": [{"source": "ixml", "key": "TAPE"}, {"source": "tape_source_mob", "key": "Name"}],
+      "scene": [{"source": "ixml", "key": "SCENE"}, {"source": "master_mob_comment", "key": "Scene"}],
+      "take": [{"source": "ixml", "key": "TAKE"}, {"source": "master_mob_comment", "key": "Take"}]
+    }
+  },
   "format_mismatch": {
     "name": "Format mismatch",
     "severity": "FAIL",

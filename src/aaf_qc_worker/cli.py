@@ -18,6 +18,7 @@ from .container import corruption_message, stream_reaches_offset
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
 from .handles import short_handles_message
 from .levels import EmbeddedPeak, linked_peak
+from .metadata import IXMLReader, linked_ixml, metadata_values, missing_metadata_message
 from .timeline import sound_clips
 
 
@@ -71,6 +72,7 @@ def check_aaf(path, config):
                 media_format = None
                 media_duration = None
                 peak = None
+                ixml = {}
                 if clip.embedded:
                     reader = None
                     try:
@@ -81,14 +83,18 @@ def check_aaf(path, config):
                                 likely_empty_clips.append(clip_location(clip))
                             reader = AudioReader(stream, config["audio_reader"]["chunk_bytes"])
                             scan = EmbeddedPeak(clip.scan_start, clip.scan_end)
+                            xml_reader = IXMLReader()
                             for block in reader:
                                 scan.consume(block, reader.format)
+                                if block.chunk_id == b"iXML":
+                                    xml_reader.feed(block.data)
                                 bytes_read += len(block.data)
                                 emit(
                                     "progress", aaf_path=str(path), clips_done=done - 1,
                                     clips_total=len(clips), bytes_read=bytes_read,
                                 )
                             peak = scan.peak
+                            ixml = xml_reader.finish()
                             if (
                                 reader.format and reader.format.encoding in (1, 3)
                                 and reader.format.block_align > 0 and reader.format.sample_rate > 0
@@ -171,6 +177,21 @@ def check_aaf(path, config):
                         aaf_path=str(path), rule_id="short_handles",
                         rule_name=rule["name"], severity=rule["severity"],
                         **clip_location(clip), message=handle_message,
+                        fix_instruction=rule["fix_instruction"],
+                    ))
+                rule = config["missing_field_recorder_metadata"]
+                if clip.linked_path:
+                    ixml = linked_ixml(
+                        clip.linked_path, config["audio_reader"]["chunk_bytes"],
+                    )
+                metadata_message = missing_metadata_message(
+                    metadata_values(clip.metadata_sources, ixml, rule["field_map"]), rule,
+                )
+                if metadata_message:
+                    findings.append(dict(
+                        aaf_path=str(path), rule_id="missing_field_recorder_metadata",
+                        rule_name=rule["name"], severity=rule["severity"],
+                        **clip_location(clip), message=metadata_message,
                         fix_instruction=rule["fix_instruction"],
                     ))
                 findings[first_finding:] = sorted(
