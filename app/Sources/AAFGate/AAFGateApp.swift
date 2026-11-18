@@ -39,15 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class GateModel: ObservableObject {
     static let shared = GateModel()
 
-    @Published private(set) var pending: [URL] = []
-    @Published private(set) var isRunning = false
-    @Published private(set) var currentFile: URL?
-    @Published private(set) var verdict: Verdict?
-    @Published private(set) var status = "Drop an AAF to check"
-    @Published private(set) var detail = "Or choose File > Open."
-    @Published private(set) var progress = ""
-    @Published private(set) var reportPaths: [String] = []
-    @Published private(set) var completed: [CompletedCheck] = []
+    let queue = CheckQueue(
+        runner: WorkerRunner(executableURL: Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/aaf-qc-worker/aaf-qc-worker")),
+        logs: RunLogStore()
+    )
 
     func openFiles() {
         let panel = NSOpenPanel()
@@ -60,16 +56,9 @@ final class GateModel: ObservableObject {
     }
 
     func enqueue(_ urls: [URL]) {
-        for url in urls.map(\.standardizedFileURL) {
-            guard url.isFileURL, url.pathExtension.lowercased() == "aaf" else { continue }
-            guard !pending.contains(url), !(isRunning && currentFile == url) else { continue }
-            pending.append(url)
-        }
+        queue.enqueue(urls)
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-        guard !isRunning, !pending.isEmpty else { return }
-        isRunning = true
-        Task { await drainQueue() }
     }
 
     func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -90,54 +79,19 @@ final class GateModel: ObservableObject {
         return true
     }
 
-    private func drainQueue() async {
-        while !pending.isEmpty {
-            let aaf = pending.removeFirst()
-            currentFile = aaf
-            verdict = nil
-            status = "Checking \(aaf.lastPathComponent)"
-            detail = ""
-            progress = "Starting…"
-            reportPaths = []
-            let executable = Bundle.main.bundleURL
-                .appendingPathComponent("Contents/Helpers/aaf-qc-worker/aaf-qc-worker")
-            do {
-                let result = try await WorkerRunner(executableURL: executable).check(aaf) { event in
-                    await self.receive(event)
-                }
-                verdict = result.verdict
-                detail = [result.reason, result.reportError].compactMap { $0 }.joined(separator: "\n")
-                reportPaths = result.reportPaths
-            } catch {
-                verdict = .error
-                detail = error.localizedDescription
-            }
-            progress = ""
-            status = aaf.lastPathComponent
-            completed.append(CompletedCheck(file: aaf.lastPathComponent, verdict: verdict ?? .error))
-        }
-        isRunning = false
-    }
-
-    private func receive(_ event: WorkerEvent) {
-        if case .progress(let done, let total, let bytes) = event {
-            progress = "\(done) of \(total) clips · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) read"
-        }
-    }
-
     func revealReports() {
-        NSWorkspace.shared.activateFileViewerSelecting(reportPaths.map { URL(fileURLWithPath: $0) })
+        NSWorkspace.shared.activateFileViewerSelecting((queue.current?.reportPaths ?? []).map { URL(fileURLWithPath: $0) })
     }
-}
-
-struct CompletedCheck: Identifiable {
-    let id = UUID()
-    let file: String
-    let verdict: Verdict
 }
 
 struct GateView: View {
-    @ObservedObject var model: GateModel
+    let model: GateModel
+    @ObservedObject var queue: CheckQueue
+
+    init(model: GateModel) {
+        self.model = model
+        self.queue = model.queue
+    }
     @State private var isTargeted = false
 
     var body: some View {
@@ -149,38 +103,53 @@ struct GateView: View {
                 Button("Open AAF…") { model.openFiles() }
             }
             VStack(alignment: .leading, spacing: 10) {
-                if let verdict = model.verdict {
-                    Text(verdict.rawValue)
+                if let run = queue.current, run.status != .running {
+                    Text(label(for: run.status))
                         .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .foregroundStyle(color(for: verdict))
+                        .foregroundStyle(color(for: run.status))
                         .accessibilityIdentifier("verdict")
-                } else if model.isRunning {
-                    ProgressView().controlSize(.small)
+                } else if queue.isRunning {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Spacer()
+                        Button(queue.isCancelling ? "Cancelling…" : "Cancel") { queue.cancel() }
+                            .disabled(!queue.canCancel)
+                            .accessibilityIdentifier("cancel")
+                    }
                 } else {
                     Image(systemName: "square.and.arrow.down").font(.largeTitle)
                 }
-                Text(model.status).font(.headline).textSelection(.enabled)
-                if !model.detail.isEmpty { Text(model.detail).textSelection(.enabled) }
-                if !model.progress.isEmpty { Text(model.progress).foregroundStyle(.secondary) }
+                Text(queue.current?.aaf.lastPathComponent ?? "Drop an AAF to check")
+                    .font(.headline).textSelection(.enabled)
+                if let run = queue.current, !run.detail.isEmpty {
+                    Text(run.detail).textSelection(.enabled)
+                }
+                if queue.isRunning, let progress = queue.current?.progress {
+                    ProgressView(value: Double(progress.clipsDone), total: Double(max(1, progress.clipsTotal)))
+                    Text("\(progress.clipsDone) of \(progress.clipsTotal) clips · \(ByteCountFormatter.string(fromByteCount: progress.bytesRead, countStyle: .file)) read")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("progress")
+                }
                 Text("Drop AAF files here").foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
             .background(isTargeted ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            if !model.reportPaths.isEmpty {
+            if !(queue.current?.reportPaths.isEmpty ?? true) {
                 Button("Reveal reports in Finder") { model.revealReports() }
             }
-            if !model.pending.isEmpty {
-                Text("Queued: \(model.pending.map(\.lastPathComponent).joined(separator: ", "))")
+            if !queue.pending.isEmpty {
+                Text("Queued: \(queue.pending.map(\.lastPathComponent).joined(separator: ", "))")
                     .foregroundStyle(.secondary)
             }
+            if let error = queue.logRetentionError { Text(error).foregroundStyle(.secondary) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(model.completed) { result in
+                    ForEach(queue.completed) { result in
                         HStack {
-                            Text(result.verdict.rawValue).bold().foregroundStyle(color(for: result.verdict))
-                            Text(result.file)
+                            Text(label(for: result.status)).bold().foregroundStyle(color(for: result.status))
+                            Text(result.aaf.lastPathComponent)
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -191,11 +160,20 @@ struct GateView: View {
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { model.acceptDrop($0) }
     }
 
-    private func color(for verdict: Verdict) -> Color {
-        switch verdict {
-        case .pass: .green
-        case .fail: .red
-        case .error: .orange
+    private func label(for status: CheckStatus) -> String {
+        switch status {
+        case .running: "Checking"
+        case .cancelled: "Cancelled"
+        case .finished(let verdict): verdict.rawValue
+        }
+    }
+
+    private func color(for status: CheckStatus) -> Color {
+        switch status {
+        case .finished(.pass): .green
+        case .finished(.fail): .red
+        case .finished(.error): .orange
+        case .cancelled, .running: .secondary
         }
     }
 }
