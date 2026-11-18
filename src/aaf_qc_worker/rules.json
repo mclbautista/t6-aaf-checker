@@ -3,6 +3,23 @@
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
+  "fat_count_mismatch": {
+    "name": "FAT count mismatch",
+    "severity": "INFO",
+    "message": "CFB header declares {declared} FAT sectors; DIFAT lists {actual}.",
+    "continuation_message": "DIFAT chain continues past its declared length.",
+    "unreadable_message": "DIFAT could not be fully read: {reason}. CFB header declares {declared} FAT sectors; at least {actual} FAT sector IDs were read.",
+    "fix_instruction": null
+  },
+  "unknown_exporter": {
+    "name": "Unknown exporter",
+    "severity": "WARN",
+    "product_contains": "premiere pro",
+    "vendor_contains": "adobe",
+    "field_map": {"product": "ProductName", "company": "CompanyName", "date": "Date"},
+    "message": "AAF exporter is {product} ({company}); these rules are tuned for Adobe Premiere Pro.",
+    "fix_instruction": null
+  },
   "missing_field_recorder_metadata": {
     "name": "Missing field-recorder metadata",
     "severity": "WARN",

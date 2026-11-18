@@ -14,7 +14,8 @@ import aaf2
 from aaf2.exceptions import AAFError
 
 from .audio import AudioReader
-from .container import corruption_message, stream_reaches_offset
+from .container import corruption_message, fat_count_mismatch_message, stream_reaches_offset
+from .exporter import unknown_exporter_message
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
 from .handles import short_handles_message
 from .levels import EmbeddedPeak, linked_peak
@@ -59,7 +60,26 @@ def check_aaf(path, config):
             likely_empty_clips=likely_empty_clips,
         ))
     try:
+        rule = config["fat_count_mismatch"]
+        with path.open("rb") as stream:
+            fat_message = fat_count_mismatch_message(stream, header, file_size, rule)
+        if fat_message:
+            findings.append(dict(
+                aaf_path=str(path), rule_id="fat_count_mismatch",
+                rule_name=rule["name"], severity=rule["severity"],
+                track=None, record_in_timecode=None, clip_name=None, source_file=None,
+                message=fat_message, fix_instruction=rule["fix_instruction"],
+            ))
         with aaf2.open(str(path), "r") as aaf:
+            rule = config["unknown_exporter"]
+            exporter_message = unknown_exporter_message(aaf.header, rule)
+            if exporter_message:
+                findings.append(dict(
+                    aaf_path=str(path), rule_id="unknown_exporter",
+                    rule_name=rule["name"], severity=rule["severity"],
+                    track=None, record_in_timecode=None, clip_name=None, source_file=None,
+                    message=exporter_message, fix_instruction=rule["fix_instruction"],
+                ))
             essence = {item.mob_id: item for item in aaf.content.essencedata}
             clips = sound_clips(aaf, path, config)
             emit(
