@@ -266,10 +266,10 @@ def test_repeated_compares_are_identical_in_corrected_position_order(tmp_path):
     assert first == second
     items = diff_items(first)
     assert [item["kind"] for item in items] == [
-        "added", "new", "persisting", "persisting", "dropped",
+        "added", "audio_content_changed", "new", "persisting", "persisting", "dropped",
     ]
     assert [(item.get("corrected_finding") or item)["track"]["slot_id"]
-            for item in items] == [3, 4, 4, 5, 3]
+            for item in items] == [3, 4, 4, 4, 5, 3]
 
 
 @pytest.mark.parametrize("extra_side", ["flagged", "corrected"])
@@ -614,9 +614,9 @@ def test_simultaneous_changes_follow_corrected_track_record_and_rule_order(tmp_p
     events = compare(flagged, corrected)
 
     assert [(item.get("corrected_finding") or item)["track"]["slot_id"]
-            for item in diff_items(events)] == [3, 5, 8, 8, 8, 8]
+            for item in diff_items(events)] == [3, 5, 8, 8, 8, 8, 8]
     assert [(item["kind"], item.get("rule_id")) for item in diff_items(events)[2:]] == [
-        ("length_change", None), ("persisting", "short_handles"),
+        ("audio_content_changed", None), ("length_change", None), ("persisting", "short_handles"),
         ("sync_shift", None), ("track_change", None),
     ]
     assert events[-1]["blocking_regressions"] == 3
@@ -724,6 +724,6 @@ def test_diff_rule_order_spans_duplicate_occurrences_at_the_same_position(tmp_pa
     items = [item for item in diff_items(events)
              if (item.get("corrected_finding") or item).get("track", {}).get("slot_id") == 3]
     assert [(item["kind"], item.get("rule_id")) for item in items] == [
-        ("length_change", None), ("persisting", "short_handles"),
+        ("audio_content_changed", None), ("length_change", None), ("persisting", "short_handles"),
         ("persisting", "short_handles"),
     ]

@@ -140,6 +140,19 @@ def compare_checks(flagged, corrected, config, emit):
             left = before_by_after[right]
             classify_findings(flagged.clip_findings[left], corrected.clip_findings[right], collect)
             blocking += compare_positions(flagged.clips[left], corrected.clips[right], collect)
+            blocking += compare_handles(
+                flagged.clips[left], corrected.clips[right],
+                flagged.handles[left], corrected.handles[right], config["compare"], collect,
+            )
+            before_hash, after_hash = flagged.audio_hashes[left], corrected.audio_hashes[right]
+            if before_hash is not None and after_hash is not None and before_hash != after_hash:
+                rule = config["audio_content_changed"]
+                collect("diff_item", kind="audio_content_changed", blocking=False,
+                        severity=rule["severity"], rule_name=rule["name"],
+                        **clip_location(clip), message=rule["message"],
+                        flagged_position=clip_position(flagged.clips[left]),
+                        corrected_position=clip_position(clip),
+                        flagged_audio_sha256=before_hash, corrected_audio_sha256=after_hash)
         else:
             emit_unpaired("added", "corrected", corrected, right, collect)
             blocking += 1
@@ -157,6 +170,28 @@ def compare_checks(flagged, corrected, config, emit):
         emit(event_type, **fields)
     return dict(summary, verdict="FAIL" if blocking else corrected.verdict,
                 blocking_regressions=blocking)
+
+
+def compare_handles(before, after, before_handles, after_handles, config, emit):
+    if before_handles is None or after_handles is None:
+        return 0
+    blocking = 0
+    for side in ("head", "tail"):
+        delta = after_handles[side] - before_handles[side]
+        if abs(delta) <= config["handle_tolerance_frames"]:
+            continue
+        harmful = delta < 0
+        emit("diff_item", kind="handle_change", blocking=harmful, harmful=harmful,
+             **clip_location(after), side=side,
+             flagged_position=clip_position(before), corrected_position=clip_position(after),
+             flagged_handle_frames=frame_value(before_handles[side]),
+             corrected_handle_frames=frame_value(after_handles[side]),
+             delta_frames=frame_value(delta),
+             message=f"{side.capitalize()} handle {'shortened' if harmful else 'lengthened'} "
+                     f"by {frame_text(abs(delta))}."
+                     + ("" if harmful else " This is not harmful."))
+        blocking += harmful
+    return blocking
 
 
 def compare_positions(before, after, emit):

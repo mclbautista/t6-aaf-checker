@@ -11,9 +11,10 @@ from aaf2.exceptions import AAFError
 
 from .audio import AudioReader
 from .container import corruption_message, fat_count_mismatch_message, stream_reaches_offset
+from .content import EmbeddedContentHash, linked_content_hash
 from .exporter import unknown_exporter_message
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
-from .handles import short_handles_message
+from .handles import delivered_handles, short_handles_message
 from .levels import EmbeddedPeak, linked_peak
 from .metadata import IXMLReader, linked_ixml, metadata_values, missing_metadata_message
 from .timeline import SequenceTiming, TimelineClip, sequence_timings, sound_clips
@@ -28,6 +29,8 @@ class CheckResult:
     edit_rates: set[Fraction]
     path: str
     sequence_timings: list[SequenceTiming]
+    handles: list[dict | None]
+    audio_hashes: list[str | None]
 
 
 def clip_location(clip):
@@ -49,6 +52,8 @@ def check_aaf(path, config, emit):
     findings = []
     clips = []
     clip_findings = []
+    handles = []
+    audio_hashes = []
     likely_empty_clips = []
     if message:
         findings.append(dict(
@@ -103,6 +108,7 @@ def check_aaf(path, config, emit):
                 media_format = None
                 media_duration = None
                 peak = None
+                audio_hash = None
                 ixml = {}
                 if clip.embedded:
                     reader = None
@@ -114,9 +120,11 @@ def check_aaf(path, config, emit):
                                 likely_empty_clips.append(clip_location(clip))
                             reader = AudioReader(stream, config["audio_reader"]["chunk_bytes"])
                             scan = EmbeddedPeak(clip.scan_start, clip.scan_end)
+                            content = EmbeddedContentHash(clip.used_start, clip.used_end)
                             xml_reader = IXMLReader()
                             for block in reader:
                                 scan.consume(block, reader.format)
+                                content.consume(block, reader.format)
                                 if block.chunk_id == b"iXML":
                                     xml_reader.feed(block.data)
                                 bytes_read += len(block.data)
@@ -125,6 +133,7 @@ def check_aaf(path, config, emit):
                                     clips_total=len(clips), bytes_read=bytes_read,
                                 )
                             peak = scan.peak
+                            audio_hash = content.hexdigest()
                             ixml = xml_reader.finish()
                             if (
                                 reader.format and reader.format.encoding in (1, 3)
@@ -187,6 +196,11 @@ def check_aaf(path, config, emit):
                         clip.linked_path, config["audio_reader"]["chunk_bytes"],
                         clip.scan_start, clip.scan_end,
                     )
+                    audio_hash = linked_content_hash(
+                        clip.linked_path, config["audio_reader"]["chunk_bytes"],
+                        clip.used_start, clip.used_end,
+                    )
+                audio_hashes.append(audio_hash)
                 level_rule = None
                 if peak == 0:
                     level_rule = "digital_silence"
@@ -203,7 +217,9 @@ def check_aaf(path, config, emit):
                         ),
                         fix_instruction=rule["fix_instruction"],
                     ))
-                handle_message = short_handles_message(clip, media_duration, config)
+                available_handles = delivered_handles(clip, media_duration)
+                handles.append(available_handles)
+                handle_message = short_handles_message(available_handles, config)
                 if handle_message:
                     rule = config["short_handles"]
                     findings.append(dict(
@@ -240,5 +256,6 @@ def check_aaf(path, config, emit):
         for finding in findings:
             emit("finding", **finding)
     verdict = "FAIL" if any(finding["severity"] == "FAIL" for finding in findings) else "PASS"
-    return CheckResult(verdict, clips, findings, clip_findings, edit_rates, str(path), timings)
+    return CheckResult(verdict, clips, findings, clip_findings, edit_rates, str(path), timings,
+                       handles, audio_hashes)
 

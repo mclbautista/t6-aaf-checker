@@ -1,9 +1,14 @@
 {
   "rule_version": "1.0.0",
-  "compare": {"minimum_paired_fraction": "1/2"},
+  "compare": {"minimum_paired_fraction": "1/2", "handle_tolerance_frames": 1},
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
   "audio_reader": {"chunk_bytes": 1048576},
+  "audio_content_changed": {
+    "name": "Audio content changed",
+    "severity": "INFO",
+    "message": "Audio samples in the clip's used range changed. Audition the clip if needed."
+  },
   "no_broadcast_wav_chunk": {
     "name": "No broadcast-WAV chunk",
     "severity": "INFO",

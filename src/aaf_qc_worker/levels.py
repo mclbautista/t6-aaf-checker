@@ -5,6 +5,8 @@ import math
 import numpy as np
 import soundfile
 
+from .audio import EmbeddedPCMWindow
+
 
 class EmbeddedPeak:
     """Keep only the peak and a partial PCM frame across reader blocks.
@@ -15,37 +17,13 @@ class EmbeddedPeak:
     """
 
     def __init__(self, start, end):
-        self.start = start
-        self.end = end
-        self.frames_read = 0
+        self.window = EmbeddedPCMWindow(start, end)
         self.peak = None
-        self.pending = b""
 
     def consume(self, block, fmt):
-        if block.chunk_id != b"data" or fmt is None or fmt.encoding != 1:
-            return
-        if fmt.bits not in (16, 24, 32) or fmt.block_align != fmt.channels * (fmt.bits // 8):
-            return
-        data = self.pending + block.data
-        count = len(data) // fmt.block_align * fmt.block_align
-        self.pending = data[count:]
-        first = max(0, math.ceil(self.start * fmt.sample_rate) - self.frames_read)
-        last = count // fmt.block_align
-        if self.end is not None:
-            last = min(last, math.ceil(self.end * fmt.sample_rate) - self.frames_read)
-        self.frames_read += count // fmt.block_align
-        if last <= first:
-            return
-        data = data[first * fmt.block_align:last * fmt.block_align]
-        count = len(data)
-        if fmt.bits == 24:
-            octets = np.frombuffer(data[:count], dtype=np.uint8).reshape(-1, 3).astype(np.int32)
-            values = octets[:, 0] | octets[:, 1] << 8 | octets[:, 2] << 16
-            values = (values ^ (1 << 23)) - (1 << 23)
-        else:
-            values = np.frombuffer(data[:count], dtype=f"<i{fmt.bits // 8}").astype(np.int64)
-        peak = int(np.max(np.abs(values))) / (2 ** (fmt.bits - 1))
-        self.peak = max(self.peak or 0, peak)
+        values = self.window.consume(block, fmt)
+        if values is not None:
+            self.peak = max(self.peak or 0, float(np.max(np.abs(values))))
 
 
 def linked_peak(path, chunk_bytes, start, end):
