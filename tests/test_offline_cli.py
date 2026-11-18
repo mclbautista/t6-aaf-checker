@@ -48,11 +48,12 @@ def test_online_baselines_report_clip_progress(tmp_path, mode):
     assert events[-1]["verdict"] == "PASS"
     assert findings(events) == []
     progress = [event for event in events if event["type"] == "progress"]
-    assert [(event["clips_done"], event["clips_total"]) for event in progress] == [
+    assert sorted({(event["clips_done"], event["clips_total"]) for event in progress}) == [
         (0, 3), (1, 3), (2, 3), (3, 3),
     ]
     assert all(event["aaf_path"] == str(path) for event in progress)
-    assert all(event["bytes_read"] >= 512 for event in progress)
+    assert progress[0]["bytes_read"] == 0
+    assert progress[-1]["bytes_read"] == (4_756_884 if mode == "embedded" else 0)
 
 
 @pytest.mark.parametrize("levels_above", [0, 1, 2])

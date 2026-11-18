@@ -1,6 +1,7 @@
 """Command-line NDJSON contract consumed by the app shell."""
 
 import argparse
+from contextlib import closing
 from importlib.metadata import version
 from importlib.resources import files
 import json
@@ -8,7 +9,9 @@ import os
 from pathlib import Path
 
 import aaf2
+from aaf2.exceptions import AAFError
 
+from .audio import AudioReader
 from .container import corruption_message
 from .timeline import sound_clips
 
@@ -18,6 +21,7 @@ def emit(event_type, **fields):
 
 
 def check_aaf(path, config):
+    bytes_read = 0
     with path.open("rb") as stream:
         header = stream.read(512)
         file_size = os.fstat(stream.fileno()).st_size
@@ -26,7 +30,7 @@ def check_aaf(path, config):
     if message:
         emit(
             "progress", aaf_path=str(path), clips_done=0, clips_total=0,
-            bytes_read=len(header),
+            bytes_read=bytes_read,
         )
         emit(
             "finding",
@@ -43,16 +47,29 @@ def check_aaf(path, config):
         )
     else:
         with aaf2.open(str(path), "r") as aaf:
+            essence = {item.mob_id: item for item in aaf.content.essencedata}
             clips = sound_clips(aaf, path, config)
             emit(
                 "progress", aaf_path=str(path), clips_done=0, clips_total=len(clips),
-                bytes_read=len(header),
+                bytes_read=bytes_read,
             )
             for done, clip in enumerate(clips, 1):
                 rule_id = None
-                if not clip.embedded and clip.linked_path is None:
+                if clip.embedded:
+                    try:
+                        with closing(essence[clip.essence_id].open("r")) as stream:
+                            for block in AudioReader(stream, config["audio_reader"]["chunk_bytes"]):
+                                bytes_read += len(block.data)
+                                emit(
+                                    "progress", aaf_path=str(path), clips_done=done - 1,
+                                    clips_total=len(clips), bytes_read=bytes_read,
+                                )
+                    except (AAFError, OSError, ValueError, EOFError, IndexError, KeyError, AssertionError):
+                        # A readable AAF with damaged essence is a clip FAIL.
+                        rule_id = "embedded_audio_unreadable"
+                elif clip.linked_path is None:
                     rule_id = "offline_clip"
-                elif not clip.embedded and clip.outside_delivery:
+                elif clip.outside_delivery:
                     rule_id = "media_outside_delivery_folder"
                 if rule_id:
                     rule = config[rule_id]
@@ -72,7 +89,7 @@ def check_aaf(path, config):
                     message = rule["message"]
                 emit(
                     "progress", aaf_path=str(path), clips_done=done,
-                    clips_total=len(clips), bytes_read=len(header),
+                    clips_total=len(clips), bytes_read=bytes_read,
                 )
     return "FAIL" if message else "PASS"
 
