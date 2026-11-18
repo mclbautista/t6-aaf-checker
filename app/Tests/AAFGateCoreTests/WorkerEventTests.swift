@@ -28,7 +28,33 @@ import AAFGateCore
 
 @Test func decodesDiffItem() throws {
     let event = try WorkerEventDecoder().decode(line: #"{"schema_version":1,"type":"diff_item","kind":"sync_shift","blocking":true,"delta_frames":1}"#)
-    #expect(event == .diffItem(kind: "sync_shift", blocking: true))
+    guard case .diffItem(let item) = event else {
+        Issue.record("Expected a diff item")
+        return
+    }
+    #expect(item.kind == "sync_shift")
+    #expect(item.blocking)
+    #expect(item.deltaFrames == .integer(1))
+}
+
+@Test func decodesMovedClipWithBothPositionsAndExactSubframes() throws {
+    let event = try WorkerEventDecoder().decode(line: #"{"schema_version":1,"type":"diff_item","kind":"sync_shift","blocking":true,"clip_name":"Clip 2","source_file":"clip_2.wav","message":"Clip moved by 1 frame.","delta_frames":"1/2","flagged_position":{"track":{"slot_id":3,"name":"Audio 1"},"record_in_timecode":"01:00:00:00","record_in_frames":86400,"source_in_frames":"3/2","length_frames":24},"corrected_position":{"track":{"slot_id":4,"name":"Audio 2"},"record_in_timecode":"01:00:00:01","record_in_frames":"172801/2","source_in_frames":"3/2","length_frames":24}}"#)
+    guard case .diffItem(let item) = event else {
+        Issue.record("Expected a diff item")
+        return
+    }
+    #expect(item.clipName == "Clip 2")
+    #expect(item.sourceFile == "clip_2.wav")
+    #expect(item.message == "Clip moved by 1 frame.")
+    #expect(item.deltaFrames?.description == "1/2")
+    #expect(item.flaggedPosition?.track?.slotID == 3)
+    #expect(item.flaggedPosition?.recordInTimecode == "01:00:00:00")
+    #expect(item.flaggedPosition?.recordInFrames == .integer(86400))
+    #expect(item.correctedPosition?.track?.slotID == 4)
+    #expect(item.correctedPosition?.recordInTimecode == "01:00:00:01")
+    #expect(item.correctedPosition?.recordInFrames?.description == "172801/2")
+    #expect(item.correctedPosition?.sourceInFrames?.description == "3/2")
+    #expect(item.correctedPosition?.lengthFrames == .integer(24))
 }
 
 @Test(arguments: ["PASS", "FAIL", "ERROR"])

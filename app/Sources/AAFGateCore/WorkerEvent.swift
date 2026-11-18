@@ -2,9 +2,9 @@ import Foundation
 
 public enum WorkerEvent: Equatable, Sendable {
     case runStarted(mode: String, workerVersion: String, ruleVersion: String)
-    case progress(clipsDone: Int, clipsTotal: Int, bytesRead: Int64)
+    case progress(clipsDone: Int, clipsTotal: Int, bytesRead: Int64, aafRole: String? = nil)
     case finding(WorkerFinding)
-    case diffItem(kind: String, blocking: Bool)
+    case diffItem(DiffItem)
     case terminal(TerminalEvent)
 }
 
@@ -19,6 +19,10 @@ public struct TerminalEvent: Decodable, Equatable, Sendable {
     public let reason: String?
     public let reportPaths: [String]
     public let reportError: String?
+    public let flaggedVerdict: Verdict?
+    public let correctedVerdict: Verdict?
+    public let blockingRegressions: Int?
+    public let pairedClips: Int?
 }
 
 public struct WorkerEventDecoder: Sendable {
@@ -38,12 +42,11 @@ public struct WorkerEventDecoder: Sendable {
             return .runStarted(mode: value.mode, workerVersion: value.workerVersion, ruleVersion: value.ruleVersion)
         case "progress":
             let value = try decoder.decode(Progress.self, from: data)
-            return .progress(clipsDone: value.clipsDone, clipsTotal: value.clipsTotal, bytesRead: value.bytesRead)
+            return .progress(clipsDone: value.clipsDone, clipsTotal: value.clipsTotal, bytesRead: value.bytesRead, aafRole: value.aafRole)
         case "finding":
             return .finding(try decoder.decode(WorkerFinding.self, from: data))
         case "diff_item":
-            let value = try decoder.decode(Diff.self, from: data)
-            return .diffItem(kind: value.kind, blocking: value.blocking)
+            return .diffItem(try decoder.decode(DiffItem.self, from: data))
         case "terminal":
             return .terminal(try decoder.decode(TerminalEvent.self, from: data))
         default:
@@ -78,9 +81,5 @@ private struct Progress: Decodable {
     let clipsDone: Int
     let clipsTotal: Int
     let bytesRead: Int64
-}
-
-private struct Diff: Decodable {
-    let kind: String
-    let blocking: Bool
+    let aafRole: String?
 }

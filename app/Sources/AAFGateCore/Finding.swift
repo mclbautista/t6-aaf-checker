@@ -24,6 +24,7 @@ public struct FindingLocation: Decodable, Equatable, Sendable {
 }
 
 public struct WorkerFinding: Decodable, Equatable, Sendable {
+    public let aafRole: String?
     public let ruleID: String
     public let ruleName: String
     public let severity: Severity
@@ -45,11 +46,12 @@ public struct WorkerFinding: Decodable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case ruleID = "ruleId"
-        case ruleName, severity, message, fixInstruction, likelyEmptyClips
+        case ruleName, severity, message, fixInstruction, likelyEmptyClips, aafRole
     }
 
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        aafRole = try values.decodeIfPresent(String.self, forKey: .aafRole)
         ruleID = try values.decode(String.self, forKey: .ruleID)
         ruleName = try values.decodeIfPresent(String.self, forKey: .ruleName) ?? ruleID
         severity = try values.decode(Severity.self, forKey: .severity)

@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// One process per check. Only worker events determine the displayed result.
+/// One process per run. Only worker events determine the displayed result.
 public struct WorkerRunner: Sendable {
     public let executableURL: URL
 
@@ -14,12 +14,32 @@ public struct WorkerRunner: Sendable {
         log: WorkerLog? = nil,
         onEvent: @escaping @Sendable (WorkerEvent) async -> Void
     ) async throws -> TerminalEvent {
+        try await run(arguments: ["check", aaf.path], log: log, onEvent: onEvent)
+    }
+
+    public func compare(
+        flagged: URL,
+        corrected: URL,
+        log: WorkerLog? = nil,
+        onEvent: @escaping @Sendable (WorkerEvent) async -> Void
+    ) async throws -> TerminalEvent {
+        try await run(
+            arguments: ["compare", "--flagged", flagged.path, "--corrected", corrected.path],
+            log: log, onEvent: onEvent
+        )
+    }
+
+    private func run(
+        arguments: [String],
+        log: WorkerLog?,
+        onEvent: @escaping @Sendable (WorkerEvent) async -> Void
+    ) async throws -> TerminalEvent {
         let control = WorkerProcessControl()
         return try await withTaskCancellationHandler {
             try await Task.detached {
                 let process = Process()
                 process.executableURL = executableURL
-                process.arguments = ["check", aaf.path]
+                process.arguments = arguments
                 process.environment = ProcessInfo.processInfo.environment.filter {
                     !$0.key.hasPrefix("PYTHON") && $0.key != "VIRTUAL_ENV"
                 }
@@ -33,7 +53,7 @@ public struct WorkerRunner: Sendable {
                 // Drain stderr concurrently so a verbose worker cannot fill its pipe.
                 let diagnostics = Task.detached {
                     var tail = Data()
-                    while let chunk = try? readChunk(stderr.fileHandleForReading), !chunk.isEmpty {
+                    while let chunk = try? await readChunk(stderr.fileHandleForReading), !chunk.isEmpty {
                         log?.append(chunk)
                         tail.append(chunk)
                         if tail.count > 8192 { tail = Data(tail.suffix(8192)) }
@@ -58,7 +78,7 @@ public struct WorkerRunner: Sendable {
 
                 do {
                     var pending = Data()
-                    while let chunk = try readChunk(stdout.fileHandleForReading), !chunk.isEmpty {
+                    while let chunk = try await readChunk(stdout.fileHandleForReading), !chunk.isEmpty {
                         log?.append(chunk)
                         pending.append(chunk)
                         while let newline = pending.firstIndex(of: 0x0A) {
@@ -68,7 +88,7 @@ public struct WorkerRunner: Sendable {
                         }
                     }
                     try await consume(pending)
-                    process.waitUntilExit()
+                    await waitForExit(process)
                     let stderrText = await diagnostics.value
                     try control.checkCancellation()
                     guard let terminal else {
@@ -90,7 +110,7 @@ public struct WorkerRunner: Sendable {
                     control.stop()
                     // Closing stdout also unblocks a worker still trying to write.
                     try? stdout.fileHandleForReading.close()
-                    process.waitUntilExit()
+                    await waitForExit(process)
                     _ = await diagnostics.value
                     try control.checkCancellation()
                     throw error
@@ -114,7 +134,27 @@ public enum WorkerRunError: LocalizedError, Sendable {
 
 // FileHandle.read(upToCount:) can wait to fill the buffer on a pipe. A single
 // POSIX read returns available bytes so progress is delivered while it is live.
-private func readChunk(_ handle: FileHandle) throws -> Data? {
+private func readChunk(_ handle: FileHandle) async throws -> Data? {
+    // Pipe reads block. Keep them off Swift's cooperative executor so multiple
+    // runs cannot starve the tasks that consume events or finish cancellation.
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global(qos: .utility).async {
+            do { continuation.resume(returning: try readAvailableChunk(handle)) }
+            catch { continuation.resume(throwing: error) }
+        }
+    }
+}
+
+private func waitForExit(_ process: Process) async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            continuation.resume()
+        }
+    }
+}
+
+private func readAvailableChunk(_ handle: FileHandle) throws -> Data? {
     var buffer = [UInt8](repeating: 0, count: 8192)
     while true {
         let count = Darwin.read(handle.fileDescriptor, &buffer, buffer.count)
