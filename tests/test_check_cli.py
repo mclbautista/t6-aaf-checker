@@ -10,12 +10,13 @@ import pytest
 WORKER = Path(sys.executable).with_name("aaf-qc-worker")
 
 
-def check(path):
+def check(path, *, cwd=None):
     process = subprocess.run(
         [sys.executable, str(WORKER), "check", str(path)],
         capture_output=True,
         text=True,
         timeout=30,
+        cwd=cwd,
     )
     events = [json.loads(line) for line in process.stdout.splitlines()]
     assert events, f"Worker emitted no events: {process.stderr}"
@@ -42,7 +43,9 @@ def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
     progress = [event for event in events if event["type"] == "progress"]
     assert progress
     assert all(event["aaf_path"] == str(path) for event in progress)
-    assert all(event["clips_done"] == event["clips_total"] == 0 for event in progress)
+    assert progress[0]["clips_done"] == 0
+    assert all(event["clips_total"] == 3 for event in progress)
+    assert progress[-1]["clips_done"] == 3
     assert progress[-1]["bytes_read"] >= 512
     assert not [event for event in events if event["type"] == "finding"]
     assert events[-1]["verdict"] == "PASS"
