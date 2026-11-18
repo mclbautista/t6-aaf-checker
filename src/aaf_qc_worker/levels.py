@@ -9,8 +9,9 @@ import soundfile
 class EmbeddedPeak:
     """Keep only the peak and a partial PCM frame across reader blocks.
 
-    Bounds are exact seconds. A sample counts when its start lies in the
-    half-open window, so both bounds round up to integer sample frames.
+    Bounds are exact seconds; an end of None scans to the end of the stream.
+    A sample counts when its start lies in the half-open window, so both
+    bounds round up to integer sample frames.
     """
 
     def __init__(self, start, end):
@@ -29,7 +30,9 @@ class EmbeddedPeak:
         count = len(data) // fmt.block_align * fmt.block_align
         self.pending = data[count:]
         first = max(0, math.ceil(self.start * fmt.sample_rate) - self.frames_read)
-        last = min(count // fmt.block_align, math.ceil(self.end * fmt.sample_rate) - self.frames_read)
+        last = count // fmt.block_align
+        if self.end is not None:
+            last = min(last, math.ceil(self.end * fmt.sample_rate) - self.frames_read)
         self.frames_read += count // fmt.block_align
         if last <= first:
             return
@@ -49,7 +52,9 @@ def linked_peak(path, chunk_bytes, start, end):
     peak = None
     with soundfile.SoundFile(str(path), "r") as media:
         first = min(media.frames, max(0, math.ceil(start * media.samplerate)))
-        last = min(media.frames, max(0, math.ceil(end * media.samplerate)))
+        last = media.frames if end is None else min(
+            media.frames, max(0, math.ceil(end * media.samplerate))
+        )
         media.seek(first)
         remaining = last - first
         frames = max(1, chunk_bytes // (8 * media.channels))
