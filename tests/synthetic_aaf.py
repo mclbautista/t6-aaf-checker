@@ -14,7 +14,9 @@ Use from CLI tests (no pyaaf2 code is needed)::
 ``with_clip`` uses one-based clip numbers and dataclass field names. It returns a
 new timeline, so reds cannot mutate their green counterparts. Clip fields cover
 sample rate, channels, bit depth, PCM sample value (zero for silence), metadata,
-handles and timing. Amplitudes are signed integer PCM values in the selected bit
+handles and timing. ``media_mode`` overrides the export mode for one clip;
+``chain_depth`` inserts upstream mobs with stale locators before its file mob.
+Amplitudes are signed integer PCM values in the selected bit
 depth. One clip occupies each sound slot; supply a different ``clips`` tuple for
 a different timeline. Durations, positions and handles are sequence frames.
 
@@ -38,6 +40,7 @@ audio rules or comparison. Outputs under the repository are rejected. Always
 pass pytest's tmp_path (or a TemporaryDirectory), never a checked-in directory.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 import shutil
@@ -69,6 +72,8 @@ class Clip:
     scene: str = "Scene 1"
     take: str = "1"
     truncate_bytes: int = 0
+    media_mode: str | None = None
+    chain_depth: int = 0
 
 
 @dataclass(frozen=True)
@@ -127,8 +132,7 @@ class Timeline:
                 for clip in self.clips:
                     wav_path = media_root / clip.media_name
                     samples = _write_wav(wav_path, clip)
-                    master = _audio_chain(aaf, clip, samples)
-                    source = master.slot_at(1).segment.mob
+                    master, source = _audio_chain(aaf, clip, samples)
                     # This path is never created. The delivered WAV is beside the
                     # AAF; embedded exports retain an equally stale locator.
                     locator = aaf.create.NetworkLocator()
@@ -136,7 +140,12 @@ class Timeline:
                         path.parent / ".unavailable-export" / media_folder / clip.media_name
                     ).as_uri()
                     source.descriptor["Locator"].append(locator)
-                    if mode == "embedded":
+                    clip_mode = clip.media_mode or mode
+                    if clip_mode == "linked" and mode == "embedded":
+                        delivered = path.parent / media_folder
+                        delivered.mkdir(exist_ok=True)
+                        shutil.copyfile(wav_path, delivered / clip.media_name)
+                    if clip_mode == "embedded":
                         essence = aaf.create.EssenceData()
                         essence.mob_id = source.mob_id
                         aaf.content.essencedata.append(essence)
@@ -186,6 +195,29 @@ def patch_header(
                 stream.seek(offset)
                 stream.write(struct.pack("<H", value))
     return path
+
+
+@contextmanager
+def edit_export(path):
+    """Build structural variants of a synthetic export outside the repository."""
+    path = _outside_repository(path)
+    with aaf2.open(str(path), "rw") as aaf:
+        yield aaf
+    patch_header(path, major_version=3)
+
+
+def operation_group(aaf, *, length, operation="gain"):
+    definitions = {
+        "gain": ("9d2ea894-0968-11d3-8a38-0050040ef7d2", 1),
+        "pan": ("9d2ea893-0968-11d3-8a38-0050040ef7d2", 1),
+        "dissolve": ("0c3bea41-fc05-11d2-8a29-0050040ef7d2", 2),
+    }
+    identifier, inputs = definitions[operation]
+    definition = aaf.create.OperationDef(identifier, f"Synthetic {operation}")
+    definition.media_kind = "sound"
+    definition.number_inputs = inputs
+    aaf.dictionary.register_def(definition)
+    return aaf.create.OperationGroup(definition, length=length, media_kind="sound")
 
 
 def _outside_repository(path: Path) -> Path:
@@ -252,5 +284,23 @@ def _audio_chain(aaf, clip: Clip, samples: int):
     master.comments["Scene"] = clip.scene
     master.comments["Take"] = clip.take
     master_slot = master.create_timeline_slot(EDIT_RATE, slot_id=1)
-    master_slot.segment = source.create_source_clip(1, length=frames)
-    return master
+    target = source
+    for index in range(clip.chain_depth):
+        intermediate = aaf.create.SourceMob(f"Intermediate {index}")
+        aaf.content.mobs.append(intermediate)
+        intermediate.descriptor = aaf.create.ImportDescriptor()
+        stale = aaf.create.NetworkLocator()
+        stale["URLString"].value = "file:///nonexistent-synthetic-storage/stale.wav"
+        intermediate.descriptor["Locator"].append(stale)
+        slot = intermediate.create_timeline_slot(EDIT_RATE, slot_id=1)
+        slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=frames))
+        target = intermediate
+    # Premiere Pro wraps each MasterMob slot's SourceClip in a one-item Sequence.
+    master_slot.segment = _in_sequence(aaf, target.create_source_clip(1, length=frames))
+    return master, source
+
+
+def _in_sequence(aaf, component):
+    sequence = aaf.create.Sequence(media_kind="sound")
+    sequence.components.append(component)
+    return sequence

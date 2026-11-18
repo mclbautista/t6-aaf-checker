@@ -1,10 +1,17 @@
 {
   "rule_version": "1.0.0",
+  "linked_media": {"levels_above": 2},
   "container_corrupt": {
     "name": "Container corrupt",
     "severity": "FAIL",
     "sector_shifts": {"3": 9, "4": 12},
     "max_file_bytes": {"3": 2147483648},
     "fix_instruction": "Export with linked media."
+  },
+  "offline_clip": {
+    "name": "Offline clip",
+    "severity": "FAIL",
+    "message": "Clip has no embedded essence or linked media file that exists.",
+    "fix_instruction": "Include the missing media in the delivery folder and re-export the AAF."
   }
 }

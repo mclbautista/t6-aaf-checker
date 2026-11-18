@@ -10,6 +10,7 @@ from pathlib import Path
 import aaf2
 
 from .container import corruption_message
+from .timeline import sound_clips
 
 
 def emit(event_type, **fields):
@@ -20,16 +21,13 @@ def check_aaf(path, config):
     with path.open("rb") as stream:
         header = stream.read(512)
         file_size = os.fstat(stream.fileno()).st_size
-    emit(
-        "progress",
-        aaf_path=str(path),
-        clips_done=0,
-        clips_total=0,
-        bytes_read=len(header),
-    )
     rule = config["container_corrupt"]
     message = corruption_message(header, file_size, rule)
     if message:
+        emit(
+            "progress", aaf_path=str(path), clips_done=0, clips_total=0,
+            bytes_read=len(header),
+        )
         emit(
             "finding",
             aaf_path=str(path),
@@ -45,7 +43,32 @@ def check_aaf(path, config):
         )
     else:
         with aaf2.open(str(path), "r") as aaf:
-            aaf.header
+            clips = sound_clips(aaf, path, config)
+            emit(
+                "progress", aaf_path=str(path), clips_done=0, clips_total=len(clips),
+                bytes_read=len(header),
+            )
+            for done, clip in enumerate(clips, 1):
+                if not clip.embedded and clip.linked_path is None:
+                    rule = config["offline_clip"]
+                    emit(
+                        "finding",
+                        aaf_path=str(path),
+                        rule_id="offline_clip",
+                        rule_name=rule["name"],
+                        severity=rule["severity"],
+                        track={"slot_id": clip.slot_id, "name": clip.track_name},
+                        record_in_timecode=clip.record_in_timecode,
+                        clip_name=clip.name,
+                        source_file=clip.source_file,
+                        message=rule["message"],
+                        fix_instruction=rule["fix_instruction"],
+                    )
+                    message = rule["message"]
+                emit(
+                    "progress", aaf_path=str(path), clips_done=done,
+                    clips_total=len(clips), bytes_read=len(header),
+                )
     return "FAIL" if message else "PASS"
 
 
