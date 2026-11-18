@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aaf-gate-worker"
+version = "0.1.0"
+description = "Read-only AAF Gate quality-control worker"
+requires-python = "==3.12.*"
+dependencies = [
+    "pyaaf2==1.7.1",
+    "soundfile==0.14.0",
+    "numpy==2.5.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+
+[project.scripts]
+aaf-qc-worker = "aaf_qc_worker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aaf_qc_worker = ["rules.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
