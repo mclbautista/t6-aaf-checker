@@ -138,7 +138,7 @@ class Timeline:
             with aaf2.open(str(path), "w", sector_size=sector_size) as aaf:
                 identification = aaf.header["IdentificationList"].value[0]
                 identification["CompanyName"].value = "Adobe"
-                identification["ProductName"].value = "Adobe Premiere Pro"
+                identification["ProductName"].value = "Premiere Pro"
                 composition = aaf.create.CompositionMob("Synthetic sequence")
                 aaf.content.mobs.append(composition)
                 duration = max(clip.record_start + clip.duration for clip in self.clips)
