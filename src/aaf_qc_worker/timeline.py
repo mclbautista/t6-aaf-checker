@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlsplit
 
 from aaf2.components import OperationGroup, Sequence, SourceClip, Transition
 from aaf2.essence import FileDescriptor
+from aaf2.mobid import MobID
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class TimelineClip:
     embedded: bool
     linked_path: Path | None
     outside_delivery: bool
+    essence_id: MobID | None
 
 
 def locator_path(url):
@@ -70,12 +72,12 @@ def clip_media(component, essence_ids, path, config):
         if mob.mob_id in essence_ids:
             locators = descriptor["Locator"].value if descriptor else []
             name = locator_path(locators[0]["URLString"].value).name if locators else mob.name
-            return True, None, name, False
+            return True, None, name, False, mob.mob_id
         if isinstance(descriptor, FileDescriptor):
             file_mob = mob
         reference = _first_source_clip(target_slot.segment)
     if file_mob is None:
-        return False, None, None, False
+        return False, None, None, False, None
     locators = [item["URLString"].value for item in file_mob.descriptor["Locator"].value]
     linked_path, outside_delivery = linked_file(
         path, locators, config["linked_media"]["levels_above"]
@@ -84,6 +86,7 @@ def clip_media(component, essence_ids, path, config):
         False, linked_path,
         locator_path(locators[0]).name if locators else file_mob.name,
         outside_delivery,
+        None,
     )
 
 
@@ -141,7 +144,7 @@ def sound_clips(aaf, path, config):
                 continue
             for position, component in timeline_occurrences(slot.segment):
                 master = component.mob
-                embedded, linked_path, source_file, outside_delivery = clip_media(
+                embedded, linked_path, source_file, outside_delivery, essence_id = clip_media(
                     component, essence_ids, path, config
                 )
                 record_start = Fraction(position, 1) / slot.edit_rate
@@ -152,6 +155,6 @@ def sound_clips(aaf, path, config):
                     slot.slot_id, slot.name, record_start,
                     timecode_label(frames, fps, drop),
                     master.name if master else None, source_file,
-                    embedded, linked_path, outside_delivery,
+                    embedded, linked_path, outside_delivery, essence_id,
                 ))
     return sorted(clips, key=lambda clip: (clip.slot_id, clip.record_start))

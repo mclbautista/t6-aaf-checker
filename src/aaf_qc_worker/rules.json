@@ -1,6 +1,13 @@
 {
   "rule_version": "1.0.0",
   "linked_media": {"levels_above": 2},
+  "audio_reader": {"chunk_bytes": 1048576},
+  "embedded_audio_unreadable": {
+    "name": "Embedded audio unreadable",
+    "severity": "FAIL",
+    "message": "Embedded audio cannot be read in full.",
+    "fix_instruction": "Export with linked media."
+  },
   "container_corrupt": {
     "name": "Container corrupt",
     "severity": "FAIL",

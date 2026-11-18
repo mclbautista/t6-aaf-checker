@@ -74,6 +74,7 @@ class Clip:
     truncate_bytes: int = 0
     media_mode: str | None = None
     chain_depth: int = 0
+    odd_unpadded: bool = False
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,8 @@ def _write_wav(path: Path, clip: Clip) -> int:
     # Round up so non-integral frame/sample conversions never shorten a handle.
     frames = clip.head + clip.duration + clip.tail
     samples = (frames * clip.sample_rate * 1001 + 23999) // 24000
+    if clip.odd_unpadded and samples % 2 == 0:
+        samples += 1  # 24-bit mono: odd sample count gives an odd data size
     width = clip.bits // 8
     sample = clip.sample_value.to_bytes(width, "little", signed=True)
     block = sample * clip.channels * CHUNK_FRAMES
@@ -242,6 +245,14 @@ def _write_wav(path: Path, clip: Clip) -> int:
         for start in range(0, samples, CHUNK_FRAMES):
             count = min(CHUNK_FRAMES, samples - start)
             wav.writeframesraw(block[:count * clip.channels * width])
+    if clip.odd_unpadded:
+        # Premiere Pro writes no RIFF pad byte after odd-sized data and its
+        # RIFF length excludes the pad.
+        data_bytes = samples * clip.channels * width
+        with path.open("r+b") as stream:
+            stream.truncate(44 + data_bytes)
+            stream.seek(4)
+            stream.write(struct.pack("<I", 36 + data_bytes))
     if clip.truncate_bytes:
         data_bytes = samples * clip.channels * width
         if not 0 < clip.truncate_bytes <= data_bytes:
