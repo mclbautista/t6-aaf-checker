@@ -30,4 +30,7 @@ aaf_qc_worker = ["rules.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 tmp_path_retention_policy = "none"
-markers = ["packaged: smoke tests of the built arm64 onedir worker"]
+markers = [
+    "packaged: smoke tests of the built arm64 onedir worker",
+    "corpus: local acceptance run on the real corpus (needs AAF_GATE_CORPUS)",
+]
