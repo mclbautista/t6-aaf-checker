@@ -32,17 +32,11 @@ FIVE_MINUTES = 300
 # Spec #1, Testing Decisions; ticket #25.
 LIKELY_EMPTY = {1: 482, 2: 248, 3: 178, 4: 271}
 
-# Open spec-vs-corpus conflict, written up on #1 for the owner: R2 and R4
-# deliver clips whose WAVs are entirely digital zero, in both exports, so
-# Digital silence FAILs the accepted exports and their compares. The rule is
-# not loosened; these cases must keep failing until the owner decides.
-SILENT_CONFLICT = {2, 4}
+# Owner decision (2026-11-18, #1): R2 and R4 deliver clips whose WAVs are
+# entirely digital zero, in both exports. They are real defects, so Digital
+# silence FAILs them: count of all-zero clips per reel.
+SILENT_CLIPS = {2: 3, 4: 4}
 
-
-def conflict(reel):
-    return pytest.param(reel, marks=pytest.mark.xfail(
-        strict=True, reason="all-zero delivered clips; open owner decision on #1",
-    )) if reel in SILENT_CONFLICT else reel
 
 pytestmark = [
     pytest.mark.corpus,
@@ -91,6 +85,10 @@ def findings(events, role=None):
             and (role is None or event.get("aaf_role") == role)]
 
 
+def silent(events, role=None):
+    return sum(item["rule_id"] == "digital_silence" for item in findings(events, role))
+
+
 def rules(events, role=None, severity=None):
     return sorted({item["rule_id"] for item in findings(events, role)
                    if severity is None or item["severity"] == severity})
@@ -114,15 +112,16 @@ def corpus():
             one((root / "Pass" / f"R{reel}").glob("*.aaf"), f"accepted R{reel}"),
         )
     results = {"checks": {}, "compares": {}, "times": {}}
+    earlier_reports = set(root.rglob("*_AAFGate_*"))
     yield root, reels, results
-    for report in root.rglob("*_AAFGate_*"):
+    for report in set(root.rglob("*_AAFGate_*")) - earlier_reports:
         report.unlink()
     assert snapshot(root) == before, "a corpus file changed during the run"
     print("\nCorpus acceptance wall times (s):",
           json.dumps({key: round(value, 1) for key, value in results["times"].items()}))
 
 
-@pytest.mark.parametrize("reel", [conflict(reel) for reel in range(1, 6)])
+@pytest.mark.parametrize("reel", [1, 2, 3, 4, 5])
 def test_flagged_export_check(corpus, reel):
     _, reels, results = corpus
     events, elapsed = run("check", reels[reel][0])
@@ -131,7 +130,9 @@ def test_flagged_export_check(corpus, reel):
     container = [item for item in findings(events) if item["rule_id"] == "container_corrupt"]
     if reel in LIKELY_EMPTY:
         assert verdict == "FAIL"
-        assert rules(events, severity="FAIL") == ["container_corrupt"]
+        expected = ["container_corrupt"] + (["digital_silence"] if reel in SILENT_CLIPS else [])
+        assert rules(events, severity="FAIL") == expected
+        assert silent(events) == SILENT_CLIPS.get(reel, 0)
         assert len(container) == 1
         # The spec counts embedded streams; the finding lists clips, and a
         # stream used by two clips lists both. One stream = one media file.
@@ -145,16 +146,21 @@ def test_flagged_export_check(corpus, reel):
     assert elapsed < FIVE_MINUTES, f"R{reel} flagged took {elapsed:.0f} s"
 
 
-@pytest.mark.parametrize("reel", [conflict(reel) for reel in range(1, 6)])
+@pytest.mark.parametrize("reel", [1, 2, 3, 4, 5])
 def test_accepted_export_check(corpus, reel):
     _, reels, results = corpus
     events, elapsed = run("check", reels[reel][1])
     results["times"][f"check accepted R{reel}"] = elapsed
-    assert events[-1]["verdict"] == "PASS", rules(events, severity="FAIL")
-    assert rules(events, severity="FAIL") == []
+    if reel in SILENT_CLIPS:
+        assert events[-1]["verdict"] == "FAIL"
+        assert rules(events, severity="FAIL") == ["digital_silence"]
+    else:
+        assert events[-1]["verdict"] == "PASS", rules(events, severity="FAIL")
+        assert rules(events, severity="FAIL") == []
+    assert silent(events) == SILENT_CLIPS.get(reel, 0)
 
 
-@pytest.mark.parametrize("reel", [conflict(reel) for reel in range(1, 6)])
+@pytest.mark.parametrize("reel", [1, 2, 3, 4, 5])
 def test_pair_compare(corpus, reel):
     _, reels, results = corpus
     flagged, corrected = reels[reel]
@@ -162,7 +168,11 @@ def test_pair_compare(corpus, reel):
     results["times"][f"compare R{reel}"] = elapsed
     terminal = events[-1]
     assert terminal["blocking_regressions"] == 0
-    assert terminal["verdict"] == "PASS"
+    assert terminal["verdict"] == ("FAIL" if reel in SILENT_CLIPS else "PASS")
+    persisting_silence = [item for item in events if item["type"] == "diff_item"
+                          and item["kind"] == "persisting"
+                          and item.get("rule_id") == "digital_silence"]
+    assert len(persisting_silence) == SILENT_CLIPS.get(reel, 0)
     resolved = [item for item in events if item["type"] == "diff_item"
                 and item["kind"] == "resolved"]
     container_resolved = [item for item in resolved if item.get("rule_id") == "container_corrupt"]
