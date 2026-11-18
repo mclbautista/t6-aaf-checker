@@ -29,7 +29,7 @@ class TimelineClip:
     used_start: Fraction
     used_end: Fraction
     scan_start: Fraction
-    scan_end: Fraction
+    scan_end: Fraction | None
     metadata_sources: dict
     locator_names: tuple[str, ...]
     structural_order: int
@@ -239,10 +239,11 @@ def sound_clips(aaf, path, config):
                 timecode_rate = timecode_slot.edit_rate if timecode_slot else slot.edit_rate
                 fps = timecode_slot.segment.fps if timecode_slot else round(slot.edit_rate)
                 frames = (timecode_start + record_start * timecode_rate) // 1
-                handles = Fraction(config["handle_frames"], 1) / slot.edit_rate
                 used_end = used_start + Fraction(component.length, 1) / slot.edit_rate
-                scan_start = used_start - handles
-                scan_end = used_end + handles
+                # Silence and level scan the whole delivered media file: "used
+                # range plus handles" is everything delivered (owner, 2026-11-18).
+                scan_start = Fraction(0)
+                scan_end = None
                 clips.append(TimelineClip(
                     slot.slot_id, slot.name, record_start,
                     timecode_label(frames, fps, drop),
