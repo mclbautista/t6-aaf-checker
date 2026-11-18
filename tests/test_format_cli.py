@@ -11,7 +11,7 @@ import pytest
 import soundfile
 
 from synthetic_aaf import Timeline, edit_export, embedded_essence_by_name
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 
 
 def format_findings(events):
@@ -231,4 +231,4 @@ def test_format_header_is_checked_even_when_later_audio_is_truncated(tmp_path):
         (7, "format_mismatch"),
     ]
     assert "disagree" in findings[2]["message"].lower()
-    assert events == check(path)
+    assert without_report_paths(events) == without_report_paths(check(path))

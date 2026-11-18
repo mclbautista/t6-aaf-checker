@@ -24,7 +24,14 @@ def check(path, *, cwd=None):
     assert events[0]["type"] == "run_started"
     assert sum(event["type"] == "terminal" for event in events) == 1
     assert events[-1]["type"] == "terminal"
+    assert process.returncode == {"PASS": 0, "FAIL": 1, "ERROR": 2}[events[-1]["verdict"]]
     return events
+
+
+def without_report_paths(events):
+    # Reruns intentionally write a fresh pair; all other event fields stay stable.
+    return [{key: value for key, value in event.items() if key != "report_paths"}
+            for event in events]
 
 
 def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
@@ -49,7 +56,8 @@ def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
     assert progress[-1]["bytes_read"] == 4_758_714
     assert not [event for event in events if event["type"] == "finding"]
     assert events[-1]["verdict"] == "PASS"
-    assert events[-1]["report_paths"] == []
+    assert len(events[-1]["report_paths"]) == 2
+    assert all(Path(path).is_file() for path in events[-1]["report_paths"])
 
 
 @pytest.mark.parametrize("major_version,sector_size", [(4, 512), (3, 4096)])
@@ -160,7 +168,7 @@ def test_repeated_checks_have_identical_events(make_aaf, verdict):
     second = check(path)
 
     assert first[-1]["verdict"] == verdict
-    assert second == first
+    assert without_report_paths(second) == without_report_paths(first)
 
 
 @pytest.mark.parametrize("major_version", [3, 4])

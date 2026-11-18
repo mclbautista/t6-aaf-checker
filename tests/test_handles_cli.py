@@ -3,7 +3,7 @@
 import pytest
 
 from synthetic_aaf import Clip, Timeline, edit_export
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 from test_levels_cli import configure_bundle, findings
 
 
@@ -155,7 +155,7 @@ def test_shared_media_handles_are_per_occurrence_and_findings_stay_ordered(tmp_p
     assert "tail" not in warnings[0]["message"]
     assert "tail: 0 frames" in warnings[1]["message"]
     assert "head" not in warnings[1]["message"]
-    assert events == check(path)
+    assert without_report_paths(events) == without_report_paths(check(path))
     for item in inputs:
         with item.open("rb") as stream:
             assert hashlib.file_digest(stream, "sha256").hexdigest() == before[item]

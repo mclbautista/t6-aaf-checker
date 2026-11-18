@@ -7,7 +7,7 @@ from urllib.parse import unquote
 import pytest
 
 from synthetic_aaf import Timeline, edit_export, operation_group
-from test_check_cli import check
+from test_check_cli import check, without_report_paths
 
 
 def findings(events):
@@ -109,7 +109,7 @@ def test_findings_use_track_slot_order_instead_of_mob_storage_order(tmp_path):
     assert first[-1]["verdict"] == "FAIL"
     assert [item["track"]["slot_id"] for item in findings(first)] == [3, 4, 5]
     assert all(item["rule_id"] == "offline_clip" for item in findings(first))
-    assert second == first
+    assert without_report_paths(second) == without_report_paths(first)
 
 
 @pytest.mark.parametrize("wrappers", [
@@ -395,7 +395,7 @@ def test_stored_absolute_file_outside_delivery_reports_each_affected_clip(tmp_pa
             ({"slot_id": 5, "name": "Audio 3"}, "00:00:03:00", "Clip 3", "clip three.wav"),
         ]
     ]
-    assert check(path) == events
+    assert without_report_paths(check(path)) == without_report_paths(events)
 
 
 def move_media_to_stored_paths(path, external):
