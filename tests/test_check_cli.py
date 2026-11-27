@@ -30,7 +30,7 @@ def check(path, *, cwd=None):
 
 def without_report_paths(events):
     # Reruns intentionally write a fresh pair; all other event fields stay stable.
-    return [{key: value for key, value in event.items() if key != "report_paths"}
+    return [{key: value for key, value in event.items() if key not in ("report_paths", "marker_paths")}
             for event in events]
 
 
@@ -45,7 +45,7 @@ def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
         "mode": "check",
         "aaf_path": str(path),
         "worker_version": "0.1.0",
-        "rule_version": "1.0.0",
+        "rule_version": "1.1.0",
     }
     progress = [event for event in events if event["type"] == "progress"]
     assert progress

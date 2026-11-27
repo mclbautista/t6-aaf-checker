@@ -48,6 +48,15 @@ dropped. Position, source-slip, length, track, handle, and content change
 detection belong to tickets #16/#17. Report generation also belongs to a later
 ticket; `report_paths` is currently an empty list.
 
+A `check` that ends FAIL, with at least one FAIL finding on a clip, also writes
+marker files beside the reports and lists them in the terminal event's
+`marker_paths` (the field is absent otherwise; `report_paths` is unchanged):
+`<name>_AAFGate_FAIL_<stamp>_PremiereXML.xml` (FCP 7 XML sequence with markers),
+`..._PremiereCSV.csv` (Premiere Markers panel columns, tab-delimited) and
+`..._Avid.txt` (tab-delimited marker list: user, timecode, track `TC1`, colour,
+comment, duration). Channels of one clip share one marker. File-level findings
+have no timecode and make no marker.
+
 Tests invoke only the installed command as a subprocess. All AAFs are built
 synthetically in pytest temporary directories; size boundaries use sparse
 padding. Compare tests use small timelines, regenerated mob IDs, embedded and

@@ -15,7 +15,7 @@ def findings(events):
 
 @pytest.mark.parametrize("mode", ["embedded", "linked"])
 def test_all_zero_clip_fails_digital_silence_only(tmp_path, mode):
-    path = Timeline().with_clip(2, sample_value=0).export(
+    path = Timeline().with_clip(2, sample_value=0, duration=72).export(
         tmp_path / "zero.aaf", mode=mode,
     )
 
@@ -159,7 +159,7 @@ def test_audio_anywhere_in_the_delivered_file_is_not_silent(tmp_path, mode, puls
 
 @pytest.mark.parametrize("mode", ["embedded", "linked"])
 def test_whole_file_silence_fails_even_with_long_handles(tmp_path, mode):
-    path = Timeline().with_clip(2, head=240, tail=240, sample_value=0).export(
+    path = Timeline().with_clip(2, head=240, tail=240, sample_value=0, duration=72).export(
         tmp_path / "silent.aaf", mode=mode,
     )
 

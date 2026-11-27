@@ -6,13 +6,15 @@ from datetime import datetime
 def unknown_exporter_message(header, rule):
     identifications = list(header["IdentificationList"].value or [])
     fields = rule["field_map"]
+    accepted = [rule, *rule.get("also_accepted", [])]
     for item in identifications:
         product = (item[fields["product"]].value or "").casefold()
         company = (item[fields["company"]].value or "").casefold()
-        if rule["product_contains"].casefold() in product and any(
-            rule["vendor_contains"].casefold() in value for value in (company, product)
-        ):
-            return None
+        for known in accepted:
+            if known["product_contains"].casefold() in product and any(
+                known["vendor_contains"].casefold() in value for value in (company, product)
+            ):
+                return None
     # Dates decide recency; list order breaks ties and covers missing dates.
     latest = max(
         enumerate(identifications),

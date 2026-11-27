@@ -115,7 +115,8 @@ def test_compare_json_has_both_headers_summary_all_regressions_and_full_correcte
     assert data["schema_version"] == 1
     assert data["verdict"] == "FAIL"
     for role, path, verdict, counts in (
-        ("flagged", flagged, "FAIL", {"FAIL": 2, "WARN": 4, "INFO": 0}),
+        # The flagged export's all-zero clip is under one second, so it is a WARN.
+        ("flagged", flagged, "FAIL", {"FAIL": 1, "WARN": 5, "INFO": 0}),
         ("corrected", corrected, "PASS", {"FAIL": 0, "WARN": 4, "INFO": 0}),
     ):
         header = data[role]
@@ -136,7 +137,7 @@ def test_compare_json_has_both_headers_summary_all_regressions_and_full_correcte
             "added": 0, "dropped": 0, "sync_shift": 1, "source_slip": 1,
             "length_change": 1, "track_change": 1, "handle_change": 2,
             "whole_reel_offset": 0, "start_timecode_change": 0,
-            "reel_length_change": 1, "audio_content_changed": 2,
+            "reel_length_change": 1, "audio_content_changed": 2, "audio_went_silent": 0,
         },
     }
     changes = [item for item in diff_items(events)

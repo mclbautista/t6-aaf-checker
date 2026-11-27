@@ -142,6 +142,10 @@ def render_pdf(destination, report):
         for rule_id, findings in sorted(groups.items()):
             add(f'{severity} - {findings[0]["rule_name"]} ({len(findings)})', heading)
             add(f"Rule: {rule_id}")
+            if severity == "INFO":
+                # Notes can run to hundreds per reel; the JSON report lists each.
+                add("Every clip is listed in the JSON report.")
+                continue
             for finding in findings:
                 location = location_text(finding)
                 if location:
@@ -275,6 +279,7 @@ def write_compare_reports(flagged, corrected, result, findings, diff_items, **me
             "added", "dropped", "sync_shift", "source_slip", "length_change",
             "track_change", "handle_change", "whole_reel_offset",
             "start_timecode_change", "reel_length_change", "audio_content_changed",
+            "audio_went_silent",
         )},
     )
     report = {

@@ -10,6 +10,7 @@ import signal
 
 from .check import check_aaf
 from .compare import compare_checks
+from .markers import write_markers
 from .report import write_check_reports, write_compare_reports
 
 
@@ -57,6 +58,7 @@ def main():
     findings = []
     compare_findings = {"flagged": [], "corrected": []}
     diff_items = []
+    timings = []
 
     def compare_emit(event_type, **fields):
         if event_type == "finding":
@@ -82,7 +84,9 @@ def main():
             worker_version=version("aaf-gate-worker"), rule_version=config["rule_version"],
         )
         if args.command == "check":
-            fields = {"verdict": check_aaf(args.aaf, config, check_emit).verdict}
+            result = check_aaf(args.aaf, config, check_emit)
+            timings = result.sequence_timings
+            fields = {"verdict": result.verdict}
         else:
             fields = run_compare(args.flagged, args.corrected, config, compare_emit)
     except Exception as error:
@@ -109,5 +113,13 @@ def main():
             )
     except Exception as error:
         fields["report_error"] = f"Report not saved: {str(error) or type(error).__name__}"
+    marker_paths = []
+    if args.command == "check" and fields["verdict"] == "FAIL":
+        try:
+            marker_paths = write_markers(args.aaf, fields["verdict"], findings, timings, run_datetime)
+        except Exception as error:
+            fields["marker_error"] = f"Markers not saved: {str(error) or type(error).__name__}"
+    if marker_paths:
+        fields["marker_paths"] = marker_paths
     emit("terminal", **fields, report_paths=report_paths)
     return {"PASS": 0, "FAIL": 1, "ERROR": 2}[fields["verdict"]]

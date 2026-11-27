@@ -43,7 +43,7 @@ def test_signed_app_bundle_runs_bundled_worker_without_python(tmp_path):
 
     worker = app / "Contents" / "Helpers" / "aaf-qc-worker" / "aaf-qc-worker"
     for name, sample, verdict in (("clean", 100, "PASS"), ("silent", 0, "FAIL")):
-        path = Timeline().with_clip(1, sample_value=sample).export(tmp_path / name / "synthetic.aaf")
+        path = Timeline().with_clip(1, sample_value=sample, duration=72).export(tmp_path / name / "synthetic.aaf")
         events, _ = run_worker([str(worker)], ["check", path], tmp_path)
         assert events[-1]["verdict"] == verdict
     unreadable = tmp_path / "unreadable.aaf"

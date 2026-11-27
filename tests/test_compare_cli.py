@@ -49,7 +49,7 @@ def test_identical_timeline_with_regenerated_ids_passes(tmp_path, mode):
     assert events[0] == {
         "schema_version": 1, "type": "run_started", "mode": "compare",
         "flagged_path": str(flagged), "corrected_path": str(corrected),
-        "worker_version": "0.1.0", "rule_version": "1.0.0",
+        "worker_version": "0.1.0", "rule_version": "1.1.0",
     }
     assert events[-1]["verdict"] == "PASS"
     assert events[-1]["flagged_verdict"] == events[-1]["corrected_verdict"] == "PASS"
@@ -130,14 +130,19 @@ def test_unpaired_clip_is_one_blocking_regression(tmp_path, kind):
 
 
 def test_corrected_failure_is_new_and_equals_standalone_check(tmp_path):
-    flagged = TIMELINE.export(tmp_path / "flagged.aaf")
-    corrected = TIMELINE.with_clip(2, sample_value=0).export(tmp_path / "corrected.aaf")
+    # Three seconds or longer, so the silence is a FAIL. The clip was audible in the
+    # flagged export, so it is also a blocking "audio went silent" regression.
+    flagged = TIMELINE.with_clip(2, duration=72).export(tmp_path / "flagged.aaf")
+    corrected = TIMELINE.with_clip(2, duration=72, sample_value=0).export(
+        tmp_path / "corrected.aaf",
+    )
 
     events = compare(flagged, corrected)
 
     assert events[-1]["verdict"] == events[-1]["corrected_verdict"] == "FAIL"
     assert events[-1]["flagged_verdict"] == "PASS"
-    assert events[-1]["blocking_regressions"] == 0
+    assert events[-1]["blocking_regressions"] == 1
+    assert [item["track"]["slot_id"] for item in diff_items(events, "audio_went_silent")] == [4]
     new = diff_items(events, "new")
     assert [item["rule_id"] for item in new] == ["digital_silence"]
     assert new[0]["flagged_finding"] is None
@@ -266,10 +271,11 @@ def test_repeated_compares_are_identical_in_corrected_position_order(tmp_path):
     assert without_report_paths(first) == without_report_paths(second)
     items = diff_items(first)
     assert [item["kind"] for item in items] == [
-        "added", "audio_content_changed", "new", "persisting", "persisting", "dropped",
+        "added", "audio_content_changed", "audio_went_silent", "new", "persisting",
+        "persisting", "dropped",
     ]
     assert [(item.get("corrected_finding") or item)["track"]["slot_id"]
-            for item in items] == [3, 4, 4, 4, 5, 3]
+            for item in items] == [3, 4, 4, 4, 4, 5, 3]
 
 
 @pytest.mark.parametrize("extra_side", ["flagged", "corrected"])
@@ -369,7 +375,9 @@ def test_locator_identity_wins_over_structural_name_fallback(tmp_path):
     events = compare(flagged, corrected)
 
     assert events[-1]["paired_clips"] == 2
-    silence = [item for item in diff_items(events) if item.get("rule_id") == "digital_silence"]
+    # Both clips share a name and record position, and one is audible, so the
+    # silent one is graded as an empty channel rather than digital silence.
+    silence = [item for item in diff_items(events) if item.get("rule_id") == "empty_channel"]
     assert len(silence) == 1
     assert silence[0]["kind"] == "persisting"
     assert silence[0]["flagged_finding"]["track"]["slot_id"] == 3

@@ -112,9 +112,9 @@ def test_check_writes_named_pdf_and_json_and_lists_both_paths(make_aaf, verdict)
 
 
 def test_json_contains_provenance_counts_and_complete_event_findings(tmp_path):
-    path = (Timeline().with_clip(1, sample_value=0)
-            .with_clip(2, scene="", bext=False)
-            .with_clip(3, scene="", bext=False).export(tmp_path / "findings.aaf"))
+    path = (Timeline().with_clip(1, sample_value=0, duration=72)
+            .with_clip(2, scene="", bext=False, ixml=(("NOTE", "x"),))
+            .with_clip(3, scene="", bext=False, ixml=(("NOTE", "x"),)).export(tmp_path / "findings.aaf"))
     place_essence_at_boundary(path)
     patch_header(path, major_version=4)
     before = datetime.now().astimezone()
@@ -127,7 +127,7 @@ def test_json_contains_provenance_counts_and_complete_event_findings(tmp_path):
     assert data["schema_version"] == 1
     assert data["verdict"] == "FAIL"
     assert data["app_version"] == events[0]["worker_version"] == "0.1.0"
-    assert data["rule_version"] == events[0]["rule_version"] == "1.0.0"
+    assert data["rule_version"] == events[0]["rule_version"] == "1.1.0"
     assert data["aaf_path"] == str(path)
     with path.open("rb") as stream:
         assert data["aaf_sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
@@ -148,9 +148,9 @@ def test_json_contains_provenance_counts_and_complete_event_findings(tmp_path):
 
 
 def test_pdf_leads_with_verdict_and_groups_every_finding_by_severity_and_rule(tmp_path):
-    path = (Timeline().with_clip(1, sample_value=0, name="Dialogue <one> & two")
-            .with_clip(2, scene="", bext=False)
-            .with_clip(3, scene="", bext=False).export(tmp_path / "grouped.aaf", major_version=4))
+    path = (Timeline().with_clip(1, sample_value=0, duration=72, name="Dialogue <one> & two")
+            .with_clip(2, scene="", bext=False, ixml=(("NOTE", "x"),))
+            .with_clip(3, scene="", bext=False, ixml=(("NOTE", "x"),)).export(tmp_path / "grouped.aaf", major_version=4))
 
     events = check(path)
 
@@ -170,7 +170,8 @@ def test_pdf_leads_with_verdict_and_groups_every_finding_by_severity_and_rule(tm
     for key in ("app_version", "rule_version", "aaf_path", "aaf_sha256", "run_datetime", "user"):
         assert "".join(data[key].split()) in compact_text
     assert "FAIL: 2 | WARN: 2 | INFO: 2" in text
-    for finding in data["findings"]:
+    # INFO notes appear as a count only; the JSON keeps every one.
+    for finding in (item for item in data["findings"] if item["severity"] != "INFO"):
         for key in ("rule_id", "message", "fix_instruction", "clip_name", "source_file", "record_in_timecode"):
             if finding.get(key):
                 assert "".join(finding[key].split()) in compact_text
@@ -328,8 +329,9 @@ def test_failed_second_publication_rolls_back_the_pair(tmp_path, monkeypatch):
 
 
 def test_1600_findings_render_in_under_ten_seconds_and_all_survive_pagination(tmp_path):
-    path = Timeline((Clip("Repeated clip", "clip.wav", 3, duration=1, head=0, tail=0,
-                          sample_value=0, scene="", bext=False),)).export(tmp_path / "many.aaf")
+    path = Timeline((Clip("Repeated clip", "clip.wav", 3, duration=72, head=0, tail=0,
+                          sample_value=0, scene="", bext=False,
+                          ixml=(("NOTE", "x"),)),)).export(tmp_path / "many.aaf")
     with edit_export(path) as aaf:
         sequence = next(aaf.content.compositionmobs()).slot_at(3).segment
         original = sequence.components[0]
@@ -358,7 +360,25 @@ def test_1600_findings_render_in_under_ten_seconds_and_all_survive_pagination(tm
     text = "\n".join(page.extract_text() for page in reader.pages)
     for message in ("Every sample in the used range plus handles is digital zero.",
                     "Missing field-recorder metadata: scene.",
-                    "Short delivered handles", "Embedded WAV has no bext chunk."):
+                    "Short delivered handles"):
         assert text.count(message) == 400
+    assert text.count("INFO - No broadcast-WAV chunk (400)") == 1
     for page_number, page in enumerate(reader.pages, 1):
         assert f"AAF Gate | Page {page_number}" in page.extract_text()
+
+
+def test_pdf_lists_info_findings_as_a_count_only_and_keeps_them_in_the_json(tmp_path):
+    path = Timeline().with_clip(2, bext=False).with_clip(3, bext=False).export(
+        tmp_path / "info.aaf",
+    )
+
+    events = check(path)
+
+    saved = reports(events)
+    data = json.loads(saved[".json"].read_text())
+    assert [item["rule_id"] for item in data["findings"]] == ["no_broadcast_wav_chunk"] * 2
+    text = "\n".join(page.extract_text() for page in PdfReader(saved[".pdf"]).pages)
+    assert "INFO - No broadcast-WAV chunk (2)" in text
+    assert "listed in the JSON report" in text
+    assert "clip_2.wav" not in text
+    assert "clip_3.wav" not in text
