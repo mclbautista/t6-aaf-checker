@@ -44,7 +44,7 @@ def test_clean_aaf_streams_started_progress_and_terminal_pass(make_aaf):
         "type": "run_started",
         "mode": "check",
         "aaf_path": str(path),
-        "worker_version": "0.1.0",
+        "worker_version": "0.2.0",
         "rule_version": "1.1.0",
     }
     progress = [event for event in events if event["type"] == "progress"]

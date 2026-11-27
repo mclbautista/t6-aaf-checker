@@ -34,7 +34,7 @@ def test_signed_app_bundle_runs_bundled_worker_without_python(tmp_path):
         info = plistlib.load(stream)
     assert info["CFBundleExecutable"] == "AAF Gate"
     assert info["CFBundleIdentifier"] == "com.terminalsix.aafgate"
-    assert info["CFBundleShortVersionString"] == "0.1.0"
+    assert info["CFBundleShortVersionString"] == "0.2.0"
     document_type = info["CFBundleDocumentTypes"][0]
     assert document_type["LSHandlerRank"] in ("Owner", "Alternate")
     assert "com.avid.aaf" in document_type["LSItemContentTypes"]
