@@ -49,7 +49,7 @@ def test_identical_timeline_with_regenerated_ids_passes(tmp_path, mode):
     assert events[0] == {
         "schema_version": 1, "type": "run_started", "mode": "compare",
         "flagged_path": str(flagged), "corrected_path": str(corrected),
-        "worker_version": "0.1.0", "rule_version": "1.1.0",
+        "worker_version": "0.2.0", "rule_version": "1.1.0",
     }
     assert events[-1]["verdict"] == "PASS"
     assert events[-1]["flagged_verdict"] == events[-1]["corrected_verdict"] == "PASS"

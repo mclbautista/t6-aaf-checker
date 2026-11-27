@@ -35,7 +35,7 @@ def run_worker(command, arguments, cwd):
     assert events, process.stderr
     assert all(event["schema_version"] == 1 for event in events)
     assert events[0]["type"] == "run_started"
-    assert events[0]["worker_version"] == "0.1.0"
+    assert events[0]["worker_version"] == "0.2.0"
     assert events[0]["rule_version"] == "1.1.0"
     assert sum(event["type"] == "terminal" for event in events) == 1
     assert events[-1]["type"] == "terminal"
@@ -45,7 +45,7 @@ def run_worker(command, arguments, cwd):
     report = json.loads(saved[".json"].read_text())
     pdf_text = "\n".join(page.extract_text() for page in PdfReader(saved[".pdf"]).pages)
     assert f'Verdict: {events[-1]["verdict"]}' in pdf_text
-    assert "App version: 0.1.0" in pdf_text
+    assert "App version: 0.2.0" in pdf_text
     assert "Rule version: 1.1.0" in pdf_text
     return events, report
 

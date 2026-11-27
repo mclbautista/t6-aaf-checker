@@ -126,7 +126,7 @@ def test_json_contains_provenance_counts_and_complete_event_findings(tmp_path):
     data = json.loads(saved[".json"].read_text())
     assert data["schema_version"] == 1
     assert data["verdict"] == "FAIL"
-    assert data["app_version"] == events[0]["worker_version"] == "0.1.0"
+    assert data["app_version"] == events[0]["worker_version"] == "0.2.0"
     assert data["rule_version"] == events[0]["rule_version"] == "1.1.0"
     assert data["aaf_path"] == str(path)
     with path.open("rb") as stream:
