@@ -1,5 +1,5 @@
 {
-  "rule_version": "1.0.0",
+  "rule_version": "1.1.0",
   "compare": {"minimum_paired_fraction": "1/2", "handle_tolerance_frames": 1},
   "linked_media": {"levels_above": 2},
   "handle_frames": 120,
@@ -28,14 +28,16 @@
     "severity": "WARN",
     "product_contains": "premiere pro",
     "vendor_contains": "adobe",
+    "also_accepted": [{"product_contains": "avid media composer", "vendor_contains": "avid"}],
     "field_map": {"product": "ProductName", "company": "CompanyName", "date": "Date"},
-    "message": "AAF exporter is {product} ({company}); these rules are tuned for Adobe Premiere Pro.",
+    "message": "AAF exporter is {product} ({company}); these rules are tuned for Adobe Premiere Pro and Avid Media Composer.",
     "fix_instruction": null
   },
   "missing_field_recorder_metadata": {
     "name": "Missing field-recorder metadata",
     "severity": "WARN",
     "message": "Missing field-recorder metadata: {fields}.",
+    "unrecorded_severity": "INFO",
     "fix_instruction": null,
     "field_map": {
       "tape": [{"source": "ixml", "key": "TAPE"}, {"source": "tape_source_mob", "key": "Name"}],
@@ -80,13 +82,32 @@
     "name": "Digital silence",
     "severity": "FAIL",
     "message": "Every sample in the used range plus handles is digital zero.",
+    "short_seconds": "3",
+    "short_severity": "WARN",
     "fix_instruction": "Check the source audio in the edit and re-export with audible media."
+  },
+  "empty_channel": {
+    "name": "Empty channel",
+    "severity": "INFO",
+    "message": "Every sample is digital zero, but another track carrying the same recording at this position is audible.",
+    "fix_instruction": null
+  },
+  "audio_went_silent": {
+    "name": "Audio went silent",
+    "severity": "FAIL",
+    "message": "The clip has audio in the flagged export and is entirely digital zero in the corrected export."
   },
   "short_handles": {
     "name": "Short handles",
     "severity": "WARN",
     "message": "Short delivered handles ({handles}); need at least {threshold} sequence frames on each side.",
     "fix_instruction": null
+  },
+  "no_audio_clips": {
+    "name": "No audio clips",
+    "severity": "FAIL",
+    "message": "The delivered timeline has no audio clips, so there is nothing to check.",
+    "fix_instruction": "Re-export the AAF with the audio tracks included."
   },
   "low_level": {
     "name": "Low level",

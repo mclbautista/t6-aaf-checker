@@ -45,9 +45,21 @@ class SequenceTiming:
     length: Fraction
 
 
+def delivered_compositions(aaf):
+    """The timeline being delivered, not the sub-clips an exporter adds around it.
+
+    Avid Media Composer writes one Usage_TopLevel composition plus a
+    Usage_SubClip or Usage_AdjustedClip composition for each sub-clip it uses.
+    Premiere Pro writes one composition and leaves the usage code unset.
+    """
+    compositions = list(aaf.content.compositionmobs())
+    top = [item for item in compositions if item.usage == "Usage_TopLevel"]
+    return top or compositions
+
+
 def sequence_timings(aaf):
     timings = []
-    for composition in aaf.content.compositionmobs():
+    for composition in delivered_compositions(aaf):
         timecode = next((slot for slot in composition.slots
                          if slot.media_kind == "Timecode"), None)
         sound = next((slot for slot in composition.slots
@@ -219,7 +231,7 @@ def timecode_label(frames, fps, drop):
 def sound_clips(aaf, path, config):
     essence_ids = {essence.mob_id for essence in aaf.content.essencedata}
     clips = []
-    for composition in aaf.content.compositionmobs():
+    for composition in delivered_compositions(aaf):
         timecode_slot = next(
             (slot for slot in composition.slots if slot.media_kind == "Timecode"), None
         )

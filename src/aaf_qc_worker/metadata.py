@@ -67,6 +67,27 @@ def linked_ixml(path, chunk_bytes):
     return {}
 
 
+def linked_chunk_ids(path):
+    """RIFF chunk IDs of a linked WAV; headers only, payloads are seeked over."""
+    ids = set()
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(12)
+            if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+                return ids
+            end = 8 + struct.unpack_from("<I", header, 4)[0]
+            while stream.tell() + 8 <= end:
+                header = stream.read(8)
+                if len(header) != 8:
+                    break
+                chunk_id, size = struct.unpack("<4sI", header)
+                ids.add(chunk_id)
+                stream.seek(size + size % 2, 1)
+    except OSError:
+        pass
+    return ids
+
+
 def metadata_values(sources, ixml, field_map):
     sources = {**sources, "ixml": ixml}
     values = {}

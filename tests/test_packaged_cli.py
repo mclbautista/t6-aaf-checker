@@ -36,7 +36,7 @@ def run_worker(command, arguments, cwd):
     assert all(event["schema_version"] == 1 for event in events)
     assert events[0]["type"] == "run_started"
     assert events[0]["worker_version"] == "0.1.0"
-    assert events[0]["rule_version"] == "1.0.0"
+    assert events[0]["rule_version"] == "1.1.0"
     assert sum(event["type"] == "terminal" for event in events) == 1
     assert events[-1]["type"] == "terminal"
     assert process.returncode == {"PASS": 0, "FAIL": 1, "ERROR": 2}[events[-1]["verdict"]]
@@ -46,7 +46,7 @@ def run_worker(command, arguments, cwd):
     pdf_text = "\n".join(page.extract_text() for page in PdfReader(saved[".pdf"]).pages)
     assert f'Verdict: {events[-1]["verdict"]}' in pdf_text
     assert "App version: 0.1.0" in pdf_text
-    assert "Rule version: 1.0.0" in pdf_text
+    assert "Rule version: 1.1.0" in pdf_text
     return events, report
 
 
@@ -62,7 +62,7 @@ def stable_report(value):
 def test_relocated_packaged_check_without_python_matches_source(tmp_path):
     # Exercise embedded essence, linked libsndfile/numpy scanning, rule findings,
     # and PDF font resources together through the public command.
-    timeline = (Timeline().with_clip(1, sample_value=0)
+    timeline = (Timeline().with_clip(1, sample_value=0, duration=72)
                 .with_clip(2, media_mode="embedded", scene="", bext=False))
     path = timeline.export(tmp_path / "delivery" / "mixed.aaf", mode="linked")
     arguments = ["check", path]

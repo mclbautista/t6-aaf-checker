@@ -144,6 +144,15 @@ def compare_checks(flagged, corrected, config, emit):
                 flagged.clips[left], corrected.clips[right],
                 flagged.handles[left], corrected.handles[right], config["compare"], collect,
             )
+            if (flagged.peaks[left] is not None and flagged.peaks[left] > 0
+                    and corrected.peaks[right] == 0):
+                rule = config["audio_went_silent"]
+                collect("diff_item", kind="audio_went_silent", blocking=True,
+                        severity=rule["severity"], rule_name=rule["name"],
+                        **clip_location(clip), message=rule["message"],
+                        flagged_position=clip_position(flagged.clips[left]),
+                        corrected_position=clip_position(clip), delta_frames=None)
+                blocking += 1
             before_hash, after_hash = flagged.audio_hashes[left], corrected.audio_hashes[right]
             if before_hash is not None and after_hash is not None and before_hash != after_hash:
                 rule = config["audio_content_changed"]

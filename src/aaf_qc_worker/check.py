@@ -16,8 +16,12 @@ from .exporter import unknown_exporter_message
 from .format import descriptor_properties, linked_properties, mismatch_message, wave_properties
 from .handles import delivered_handles, short_handles_message
 from .levels import EmbeddedPeak, linked_peak
-from .metadata import IXMLReader, linked_ixml, metadata_values, missing_metadata_message
-from .timeline import SequenceTiming, TimelineClip, sequence_timings, sound_clips
+from .metadata import (
+    IXMLReader, linked_chunk_ids, linked_ixml, metadata_values, missing_metadata_message,
+)
+from .timeline import (
+    SequenceTiming, TimelineClip, delivered_compositions, sequence_timings, sound_clips,
+)
 
 
 @dataclass
@@ -31,6 +35,41 @@ class CheckResult:
     sequence_timings: list[SequenceTiming]
     handles: list[dict | None]
     audio_hashes: list[str | None]
+    peaks: list[float | None]
+
+
+def classify_silence(clips, peaks, findings, ranges, clip_findings, config):
+    """Grade each all-zero clip by its audible siblings and used length.
+
+    A sibling is another track carrying the same recording: same clip name at
+    the same record position, with a peak above the Low level floor. Needs every
+    clip's peak, so it runs once after the whole timeline is read.
+    """
+    floor = 10 ** (config["low_level"]["floor_dbfs"] / 20)
+    silence, empty = config["digital_silence"], config["empty_channel"]
+    for index, clip in enumerate(clips):
+        if len(peaks) <= index or peaks[index] != 0:
+            continue
+        start, end = ranges[index]
+        finding = next((item for item in findings[start:end]
+                        if item["rule_id"] == "digital_silence"), None)
+        if finding is None:
+            continue
+        if any(
+            other is not clip and other.name == clip.name
+            and other.record_in_timecode == clip.record_in_timecode
+            and other_peak is not None and other_peak > floor
+            for other, other_peak in zip(clips, peaks)
+        ):
+            finding.update(
+                rule_id="empty_channel", rule_name=empty["name"],
+                severity=empty["severity"], message=empty["message"],
+                fix_instruction=empty["fix_instruction"],
+            )
+        elif clip.used_end - clip.used_start < Fraction(silence["short_seconds"]):
+            finding["severity"] = silence["short_severity"]
+        findings[start:end] = sorted(findings[start:end], key=lambda item: item["rule_id"])
+        clip_findings[index] = findings[start:end]
 
 
 def clip_location(clip):
@@ -54,6 +93,8 @@ def check_aaf(path, config, emit):
     clip_findings = []
     handles = []
     audio_hashes = []
+    peaks = []
+    ranges = []
     likely_empty_clips = []
     if message:
         findings.append(dict(
@@ -93,11 +134,19 @@ def check_aaf(path, config, emit):
             essence = {item.mob_id: item for item in aaf.content.essencedata}
             edit_rates = {
                 Fraction(slot.edit_rate)
-                for composition in aaf.content.compositionmobs()
+                for composition in delivered_compositions(aaf)
                 for slot in composition.slots if slot.media_kind in ("Sound", "Timecode")
             }
             clips = sound_clips(aaf, path, config)
             timings = sequence_timings(aaf)
+            if not clips:
+                rule = config["no_audio_clips"]
+                findings.append(dict(
+                    aaf_path=str(path), rule_id="no_audio_clips",
+                    rule_name=rule["name"], severity=rule["severity"],
+                    track=None, record_in_timecode=None, clip_name=None, source_file=None,
+                    message=rule["message"], fix_instruction=rule["fix_instruction"],
+                ))
             emit(
                 "progress", aaf_path=str(path), clips_done=0, clips_total=len(clips),
                 bytes_read=bytes_read,
@@ -110,6 +159,7 @@ def check_aaf(path, config, emit):
                 peak = None
                 audio_hash = None
                 ixml = {}
+                chunk_ids = set()
                 if clip.embedded:
                     reader = None
                     try:
@@ -135,6 +185,7 @@ def check_aaf(path, config, emit):
                             peak = scan.peak
                             audio_hash = content.hexdigest()
                             ixml = xml_reader.finish()
+                            chunk_ids = set(reader.chunk_ids)
                             if (
                                 reader.format and reader.format.encoding in (1, 3)
                                 and reader.format.block_align > 0 and reader.format.sample_rate > 0
@@ -201,6 +252,7 @@ def check_aaf(path, config, emit):
                         clip.used_start, clip.used_end,
                     )
                 audio_hashes.append(audio_hash)
+                peaks.append(peak)
                 level_rule = None
                 if peak == 0:
                     level_rule = "digital_silence"
@@ -233,29 +285,35 @@ def check_aaf(path, config, emit):
                     ixml = linked_ixml(
                         clip.linked_path, config["audio_reader"]["chunk_bytes"],
                     )
+                    chunk_ids = linked_chunk_ids(clip.linked_path)
+                # Unknown chunks (unreadable or absent media) never demote the warning.
+                recorded = not chunk_ids or bool(chunk_ids & {b"bext", b"iXML"})
                 metadata_message = missing_metadata_message(
                     metadata_values(clip.metadata_sources, ixml, rule["field_map"]), rule,
                 )
                 if metadata_message:
                     findings.append(dict(
                         aaf_path=str(path), rule_id="missing_field_recorder_metadata",
-                        rule_name=rule["name"], severity=rule["severity"],
+                        rule_name=rule["name"],
+                        severity=rule["severity"] if recorded else rule["unrecorded_severity"],
                         **clip_location(clip), message=metadata_message,
                         fix_instruction=rule["fix_instruction"],
                     ))
                 findings[first_finding:] = sorted(
                     findings[first_finding:], key=lambda finding: finding["rule_id"]
                 )
+                ranges.append((first_finding, len(findings)))
                 clip_findings.append(findings[first_finding:])
                 emit(
                     "progress", aaf_path=str(path), clips_done=done,
                     clips_total=len(clips), bytes_read=bytes_read,
                 )
+        classify_silence(clips, peaks, findings, ranges, clip_findings, config)
     finally:
         # Preserve known findings even if pyaaf2 cannot open the container.
         for finding in findings:
             emit("finding", **finding)
     verdict = "FAIL" if any(finding["severity"] == "FAIL" for finding in findings) else "PASS"
     return CheckResult(verdict, clips, findings, clip_findings, edit_rates, str(path), timings,
-                       handles, audio_hashes)
+                       handles, audio_hashes, peaks)
 
